@@ -1,0 +1,9 @@
+apiVersion: demo.example.com/v1alpha1
+kind: Hello
+metadata:
+  labels:
+    app.kubernetes.io/name: hello-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: hello-sample
+spec: 
+  foo: "hello from kind+ko"
