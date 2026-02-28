@@ -4,11 +4,15 @@
 - 아키텍처: Remote-first 개발 (Kind on Remote Host)
 - 빌드/배포: `ko` 기반 이미지 빌드 + `Tilt` 오케스트레이션
 - 검증: `kube-slint` 원격 참조(예: GitHub raw URL) 기반 Shift-left SLI 계측을 CI/inner-loop에 조기 통합
+- 로컬 격리 도구 경로:
+  - 설치 스크립트: `scripts/install-tools.sh`
+  - 로컬 바이너리: `./bin/tilt`, `./bin/ko`, `./bin/kind`
+  - PATH 적용: `export PATH=$(pwd)/bin:$PATH`
 - SSH 포트 포워딩 기준:
   - Tilt UI: `localhost:10350 -> remote:10350`
-  - Metrics(HTTP): `localhost:8080 -> remote:8080` (옵션, `--metrics-secure=false`일 때)
-  - Metrics/Health 기본 포트: `localhost:8081 -> remote:8081` (health probe), `localhost:8443 -> remote:8443` (secure metrics)
+  - Metrics/Health: `localhost:8081 -> remote:8081`
   - Webhook: `localhost:9443 -> remote:9443` (webhook 활성화 시)
+  - Metrics(secure): `localhost:8443 -> remote:8443`
 
 ### 현재 저장소 기반 보강
 - Kubebuilder 스캐폴드 구조 확인: `api/v1alpha1`, `internal/controller`, `config/*`, `test/e2e`.
@@ -39,13 +43,14 @@
 - Step 4: 환경별 Kustomize 오버레이(kind/vm) 정교화 및 배포 검증
 
 ## [Current Task]
-- 목표: Step 1 실제 실행(환경 통합/스모크) 및 블로커 식별
+- 목표: Step 1-C(스크립트 기반 로컬 툴링) 완료 + Step 1(기동/스모크) 블로커 해소
 - 체크리스트:
-  - [x] 저장소 구조 및 실행 진입점(Tilt/ko/Kind/Make) 재스캔
-  - [x] 원격 도구 가용성 점검(`kind`, `tilt`, `ko`, `kubectl`)
-  - [x] Kubernetes 컨텍스트 점검(`kind-tilt-study` 존재 여부 포함)
-  - [x] Kind 클러스터 생성 시도
-  - [x] `tilt up` 실행 가능 여부 점검
+  - [x] `scripts/install-tools.sh` 작성 및 실행 권한 부여
+  - [x] `./bin` 로컬 설치 완료(`tilt`, `ko`, `kind`)
+  - [x] `.gitignore`에 `bin/` 포함 확인
+  - [x] `export PATH=$(pwd)/bin:$PATH` 기준 툴 버전 검증
+  - [x] `kind create cluster --name tilt-study` 재시도
+  - [x] `tilt up` 재시도 및 실패 원인 수집
   - [ ] Step 1 완전 성공(tilt 기반 기동 + 샘플 CR reconcile 로그 채집)
 
 ### Step 1 실행 계획 (제안)
@@ -125,3 +130,45 @@
     - Step 1 완료 시 기대 패턴:
       - `hello-operator-controller-manager` 파드 `Running/Ready`
       - 샘플 CR apply 직후 `reconcile hit` 로그 반복 관측
+- 2026-02-28: Step 1-C 스크립트 기반 로컬 툴링 설치 및 재검증.
+  - 수행 내용:
+    - `scripts/install-tools.sh` 신규 작성:
+      - Tilt/ko/kind를 GitHub release에서 `./bin`으로 설치
+      - 실행 권한 부여
+      - `.gitignore`에 `bin/` 자동 추가 로직 포함
+    - 스크립트 실행 완료 후 PATH 전환:
+      - `export PATH=$(pwd)/bin:$PATH`
+  - 검증:
+    - `./bin/tilt version` => `v0.35.0`
+    - `./bin/ko version` => `0.17.1`
+    - `./bin/kind --version` => `0.24.0`
+    - `.gitignore`에서 `bin/` 엔트리 확인 (`31:bin/`)
+    - `kind create cluster --name tilt-study` => 실패
+      - 원인: `running kind with rootless provider requires setting systemd property "Delegate=yes"`
+    - `tilt up --stream=true --host 0.0.0.0 --port 10350` => 실행은 시작되나 중단
+      - 로그 핵심:
+        - `Tilt started on http://127.0.0.1:10350/`
+        - `ERROR: Stop! kubernetes-admin@kubernetes might be production.`
+        - Tiltfile의 `allow_k8s_contexts('kind-tilt-study')` 가드로 배포 차단
+  - Delegate=yes 이슈 해결안(권장 순서):
+    1. 관리자 권한으로 user@.service drop-in 설정
+       - `/etc/systemd/system/user@.service.d/delegate.conf`:
+         - `[Service]`
+         - `Delegate=yes`
+       - 적용:
+         - `sudo systemctl daemon-reload`
+         - `sudo systemctl restart user@$(id -u)`
+    2. 사용자 세션 podman 서비스 재기동:
+       - `systemctl --user daemon-reload`
+       - `systemctl --user restart podman.service`
+    3. 재검증:
+       - `export PATH=$(pwd)/bin:$PATH`
+       - `kind create cluster --name tilt-study`
+       - `kubectl config get-contexts -o name | rg '^kind-tilt-study$'`
+  - 정상 로그 패턴(실측/기준):
+    - 실측(`tilt up`):
+      - `Tilt started on http://127.0.0.1:10350/`
+      - `Stop! kubernetes-admin@kubernetes might be production`
+    - 실제 Reconcile 로그:
+      - 이번 실행에서는 kind 컨텍스트 부재로 수집 불가
+      - 기준 패턴(코드 기준): `reconcile hit` + `name=<namespace>/<name>`
