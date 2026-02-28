@@ -51,6 +51,8 @@
   - [x] `export PATH=$(pwd)/bin:$PATH` 기준 툴 버전 검증
   - [x] `kind create cluster --name tilt-study` 재시도
   - [x] `tilt up` 재시도 및 실패 원인 수집
+  - [x] Step 1-D Delegate 설정 적용 시도(권한 제약 확인)
+  - [x] Step 1-D kind/podman 우회 시도(유저 소켓 포함)
   - [ ] Step 1 완전 성공(tilt 기반 기동 + 샘플 CR reconcile 로그 채집)
 
 ### Step 1 실행 계획 (제안)
@@ -172,3 +174,42 @@
     - 실제 Reconcile 로그:
       - 이번 실행에서는 kind 컨텍스트 부재로 수집 불가
       - 기준 패턴(코드 기준): `reconcile hit` + `name=<namespace>/<name>`
+- 2026-02-28: Step 1-D 인프라 복구 시도(Delegate + kind 기동).
+  - 수행 내용:
+    - 로컬 도구 우선 사용 확인:
+      - `export PATH=$(pwd)/bin:$PATH`
+      - `tilt v0.35.0`, `ko 0.17.1`, `kind 0.24.0`
+    - Delegate 적용 지시 수행 시도:
+      - `/etc/systemd/system/user@.service.d/delegate.conf` 생성/적용 명령 실행 시도
+      - `sudo systemctl daemon-reload`
+      - `sudo systemctl restart user@$(id -u)`
+      - `systemctl --user restart podman.service`
+    - kind 생성/컨텍스트 확보 시도:
+      - `kind create cluster --name tilt-study`
+      - `kubectl config use-context kind-tilt-study`
+    - `source hack/kind-init.sh` 후 `tilt up --host 0.0.0.0 --port 10350` 실행 시도
+  - 이슈:
+    - sudo 비밀번호 요구로 시스템 경로 수정 차단:
+      - `sudo: a terminal is required to read the password`
+      - `sudo: a password is required`
+    - rootless kind 생성 실패 지속:
+      - `running kind with rootless provider requires setting systemd property "Delegate=yes"`
+    - user-level 우회(`systemctl --user start podman.socket`, `DOCKER_HOST=/run/user/<uid>/podman/podman.sock`) 후에도 동일 실패.
+    - `tilt up`는 시작되지만 kind 컨텍스트 부재로 배포 차단:
+      - `Stop! kubernetes-admin@kubernetes might be production`
+  - 검증:
+    - `systemctl show user@$(id -u).service -p Delegate` => `Delegate=yes` 표시
+    - `systemctl --user show podman.service -p Delegate` => `Delegate=yes`
+    - `kind create cluster --name tilt-study` => 실패(Delegate 오류)
+    - `kubectl config get-contexts -o name | rg '^kind-tilt-study$'` => 미존재
+    - `tilt up` 실측 로그:
+      - `Tilt started on http://127.0.0.1:10350/`
+      - `[Docker Prune] ... /run/podman/podman.sock ... permission denied`
+      - `ERROR: Stop! kubernetes-admin@kubernetes might be production.`
+  - 정상 로그 패턴(실측 결과):
+    - Startup:
+      - 이번 단계에서는 `cmd/main.go`의 `starting manager` 미관측(클러스터/컨텍스트 미구성으로 배포 미진입)
+    - Reconcile:
+      - 이번 단계에서는 `reconcile hit` 미관측(샘플 CR 적용 불가)
+  - 상태:
+    - Step 1 = `Blocked` (권한 의존 인프라 설정 미완료)
