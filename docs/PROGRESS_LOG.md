@@ -1,9 +1,14 @@
 # PROGRESS_LOG
 
 ## [Technical Baseline]
-- 아키텍처: Remote-first 개발 (Kind on Remote Dev Host)
+- 아키텍처: Remote-first 개발 (Kind on Remote Host)
 - 빌드/배포: `ko` 기반 이미지 빌드 + `Tilt` 오케스트레이션
 - 검증: `kube-slint` 원격 참조(예: GitHub raw URL) 기반 Shift-left SLI 계측을 CI/inner-loop에 조기 통합
+- SSH 포트 포워딩 기준:
+  - Tilt UI: `localhost:10350 -> remote:10350`
+  - Metrics(HTTP): `localhost:8080 -> remote:8080` (옵션, `--metrics-secure=false`일 때)
+  - Metrics/Health 기본 포트: `localhost:8081 -> remote:8081` (health probe), `localhost:8443 -> remote:8443` (secure metrics)
+  - Webhook: `localhost:9443 -> remote:9443` (webhook 활성화 시)
 
 ### 현재 저장소 기반 보강
 - Kubebuilder 스캐폴드 구조 확인: `api/v1alpha1`, `internal/controller`, `config/*`, `test/e2e`.
@@ -34,13 +39,14 @@
 - Step 4: 환경별 Kustomize 오버레이(kind/vm) 정교화 및 배포 검증
 
 ## [Current Task]
-- 목표: Step 1 실행 계획 확정 및 준비 상태 점검
+- 목표: Step 1 실제 실행(환경 통합/스모크) 및 블로커 식별
 - 체크리스트:
-  - [x] 저장소 구조 및 실행 진입점(Tilt/ko/Kind/Make) 스캔
-  - [x] PROGRESS_LOG 초기 구조 생성
-  - [x] Technical Baseline 보강
-  - [x] Step 1 구체 실행 계획 수립
-  - [ ] Step 1 실제 실행(환경 기동/스모크)
+  - [x] 저장소 구조 및 실행 진입점(Tilt/ko/Kind/Make) 재스캔
+  - [x] 원격 도구 가용성 점검(`kind`, `tilt`, `ko`, `kubectl`)
+  - [x] Kubernetes 컨텍스트 점검(`kind-tilt-study` 존재 여부 포함)
+  - [x] Kind 클러스터 생성 시도
+  - [x] `tilt up` 실행 가능 여부 점검
+  - [ ] Step 1 완전 성공(tilt 기반 기동 + 샘플 CR reconcile 로그 채집)
 
 ### Step 1 실행 계획 (제안)
 1. 사전 도구/컨텍스트 검증
@@ -84,3 +90,38 @@
   - 검증:
     - 커밋: `e27b150` (`docs: add progress log baseline and step 1 plan`)
     - 푸시 결과: `main -> main` 반영 확인.
+- 2026-02-28: Step 1 실행(원격 환경 점검 + 기동 시도).
+  - 수행 내용:
+    - `Tiltfile`, `Makefile`, `hack/kind-init.sh` 재확인.
+    - 도구/컨텍스트 점검:
+      - `kind`: `/home/heain/bin/kind`은 `sudo` 래퍼, 실바이너리 `/usr/local/bin/kind` 확인.
+      - `tilt`: PATH 미존재.
+      - `ko`: PATH 미존재.
+      - `kubectl`: 클라이언트 v1.35.0, 현재 컨텍스트 `kubernetes-admin@kubernetes`.
+      - kind 클러스터 목록: 없음.
+    - kind 생성 시도: `/usr/local/bin/kind create cluster --name tilt-study` 실행.
+  - 이슈:
+    - kind rootless provider 제약으로 클러스터 생성 실패:
+      - `running kind with rootless provider requires setting systemd property "Delegate=yes"`.
+    - `tilt`, `ko` 미설치로 `tilt up` 단계 진입 불가.
+    - 요청 컨텍스트(`kind-tilt-study`) 부재.
+  - 해결/대응:
+    - 즉시 적용 가능한 우회는 제한적이며, Step 1 완료 전제조건 정리:
+      1. `tilt` 설치
+      2. `ko` 설치
+      3. kind 실행 경로 정상화(루트리스 podman `Delegate=yes` 설정 또는 sudo 가능한 kind wrapper 사용)
+      4. `tilt-study` 클러스터 생성 후 `kind-tilt-study` 컨텍스트 확보
+  - 검증:
+    - `/usr/local/bin/kind --version` => `0.32.0-alpha+9145d421e0d4f7`
+    - `kubectl get nodes -o wide` => `k8s-master-0 Ready`(기존 클러스터 접속 가능)
+    - `tilt up --stream=true --host 0.0.0.0 --port 10350` => `/bin/bash: tilt: command not found`
+    - `ko version` => `/bin/bash: ko: command not found`
+    - `kubectl config get-contexts -o name | rg '^kind-tilt-study$'` => 컨텍스트 없음
+  - 정상 로그 패턴 박제(비교 기준):
+    - 컨트롤러 startup 기준 (`cmd/main.go`):
+      - `setup` 로거의 `starting manager`
+    - Reconcile 기준 (`internal/controller/hello_controller.go`):
+      - `reconcile hit` + key `name=<namespace>/<name>`
+    - Step 1 완료 시 기대 패턴:
+      - `hello-operator-controller-manager` 파드 `Running/Ready`
+      - 샘플 CR apply 직후 `reconcile hit` 로그 반복 관측
