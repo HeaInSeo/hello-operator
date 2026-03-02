@@ -1,31 +1,41 @@
 # PROGRESS_LOG
 
 ## [Technical Baseline]
-- 아키텍처: Remote-first 개발 (Kind on Remote Host)
+- 아키텍처: Remote-first 개발 (VM 클러스터: kubernetes-admin@kubernetes)
+  - kind 경로(kind-tilt-study)는 rootless cgroup 위임 미완료로 차단 상태.
+  - 현재 운용 경로: 기존 k8s 클러스터(k8s-master-0, Ubuntu 24.04, containerd) 사용.
 - 빌드/배포: `ko` 기반 이미지 빌드 + `Tilt` 오케스트레이션
+  - 레지스트리: `ttl.sh/hello-op` (ephemeral, 24h TTL) - kind.local 대체
+  - 이미지 ref 포맷: `ttl.sh/hello-op/cmd-<hash>:tilt-dev@sha256:<digest>`
+  - ko 빌드 시 `--tags tilt-dev` 필수 (Tilt outputs_image_ref_to는 태그 포함 ref 요구)
 - 검증: `kube-slint` 원격 참조(예: GitHub raw URL) 기반 Shift-left SLI 계측을 CI/inner-loop에 조기 통합
 - 로컬 격리 도구 경로:
   - 설치 스크립트: `scripts/install-tools.sh`
-  - 로컬 바이너리: `./bin/tilt`, `./bin/ko`, `./bin/kind`
+  - 로컬 바이너리: `./bin/tilt v0.35.0`, `./bin/ko 0.17.1`, `./bin/kind 0.24.0`
   - PATH 적용: `export PATH=$(pwd)/bin:$PATH`
-- SSH 포트 포워딩 기준:
+- SSH 포트 포워딩 기준 (확정):
   - Tilt UI: `localhost:10350 -> remote:10350`
-  - Metrics/Health: `localhost:8081 -> remote:8081`
+  - Health probe: `localhost:8081 -> remote:8081`
+  - Metrics(secure, HTTPS): `localhost:8443 -> remote:8443`
   - Webhook: `localhost:9443 -> remote:9443` (webhook 활성화 시)
-  - Metrics(secure): `localhost:8443 -> remote:8443`
+- 클러스터 토폴로지:
+  - Dev host: `172.30.1.83`, k8s gateway: `10.87.127.1`
+  - k8s master: `k8s-master-0` @ `10.87.127.29`, v1.35.1, containerd 1.7.28
+  - 양측 모두 인터넷 접근 가능(ttl.sh pull 검증 완료)
 
 ### 현재 저장소 기반 보강
 - Kubebuilder 스캐폴드 구조 확인: `api/v1alpha1`, `internal/controller`, `config/*`, `test/e2e`.
-- `Tiltfile`:
-  - `allow_k8s_contexts('kind-tilt-study')`로 오배포 방지.
-  - `k8s_yaml(kustomize('config/overlays/kind'))`로 kind 오버레이 배포.
-  - `custom_build('controller', "ko build ./cmd > .tilt-ko-image-ref")` 패턴으로 ko 산출 이미지 ref 자동 치환.
+- `Tiltfile` (Step 1-E 수정 후 현재 상태):
+  - `allow_k8s_contexts('kubernetes-admin@kubernetes')` - VM 클러스터 허용.
+  - `KO_DOCKER_REPO = 'ttl.sh/hello-op'` - ephemeral 레지스트리.
+  - `k8s_yaml(kustomize('config/overlays/vm'))` - vm 오버레이 사용.
+  - `ko build --tags tilt-dev ./cmd` - 태그 포함 이미지 ref 출력.
   - `apply-sample`/`delete-sample` 로컬 리소스 제공.
 - `hack/kind-init.sh`:
-  - `KO_DOCKER_REPO=kind.local`, `KIND_CLUSTER_NAME=tilt-study`, `KUBECONTEXT=kind-tilt-study`를 source 방식으로 로드.
+  - `KO_DOCKER_REPO=kind.local`, `KIND_CLUSTER_NAME=tilt-study`, `KUBECONTEXT=kind-tilt-study`를 source 방식으로 로드(kind 경로용, 현재 미사용).
 - `config/overlays`:
-  - `kind`: `imagePullPolicy: IfNotPresent`, replicas 1.
-  - `vm`: 매니저 리소스 requests/limits 강화(500m/512Mi, 2CPU/2Gi).
+  - `kind`: `imagePullPolicy: IfNotPresent`, replicas 1 (kind 경로용, 현재 미사용).
+  - `vm`: 매니저 리소스 requests/limits 강화(500m/512Mi, 2CPU/2Gi) - 현재 사용 중.
 - `config/default`/`config/rbac`:
   - metrics endpoint 보호용 authn/authz RBAC(`metrics_auth_role`, `metrics_reader_role`) 포함.
   - Prometheus 관련 리소스는 기본 비활성(주석) 상태.
@@ -33,43 +43,35 @@
   - `make test`(envtest 기반), `make test-e2e`(Kind 기반), `make lint`, `make deploy/undeploy` 제공.
 
 ### 현재 갭
+- kind 경로 차단: rootless podman cgroup 위임 미완료 (`/sys/fs/cgroup/user.slice/cgroup.subtree_control` 빈 상태, root 권한 필요).
 - `kube-slint` 원격 리소스 참조 및 실행 루틴은 아직 저장소에 통합되지 않음.
 - Tilt inner-loop 내 SLI 자동 체크 파이프라인은 아직 미구현.
+- ttl.sh 이미지 TTL: 24h. 장기 개발 시 로컬 레지스트리 또는 영구 레지스트리로 전환 필요.
 
 ## [Roadmap]
-- Step 1: 현재 리포지토리의 Tilt/ko/Kind 환경 통합 및 스모크 테스트
+- Step 1: [Completed] 현재 리포지토리의 Tilt/ko/VM 환경 통합 및 스모크 테스트
 - Step 2: kube-slint 원격 리소스(GitHub) 참조 및 RBAC 설정 통합
 - Step 3: Tiltfile 고도화 (Inner-loop 내 SLI 자동 체크 기능 추가)
 - Step 4: 환경별 Kustomize 오버레이(kind/vm) 정교화 및 배포 검증
 
 ## [Current Task]
-- 목표: Step 1-C(스크립트 기반 로컬 툴링) 완료 + Step 1(기동/스모크) 블로커 해소
+- 목표: Step 2(kube-slint 원격 리소스 통합) 진입 준비
 - 체크리스트:
   - [x] `scripts/install-tools.sh` 작성 및 실행 권한 부여
   - [x] `./bin` 로컬 설치 완료(`tilt`, `ko`, `kind`)
   - [x] `.gitignore`에 `bin/` 포함 확인
   - [x] `export PATH=$(pwd)/bin:$PATH` 기준 툴 버전 검증
-  - [x] `kind create cluster --name tilt-study` 재시도
+  - [x] `kind create cluster --name tilt-study` 재시도 (차단: cgroup 위임 미완료)
   - [x] `tilt up` 재시도 및 실패 원인 수집
   - [x] Step 1-D Delegate 설정 적용 시도(권한 제약 확인)
   - [x] Step 1-D kind/podman 우회 시도(유저 소켓 포함)
-  - [ ] Step 1 완전 성공(tilt 기반 기동 + 샘플 CR reconcile 로그 채집)
+  - [x] Step 1-E VM 클러스터 대안 경로로 전환 완료
+  - [x] Step 1 완전 성공(tilt ci 기반 기동 + 샘플 CR reconcile 로그 채집)
 
-### Step 1 실행 계획 (제안)
-1. 사전 도구/컨텍스트 검증
-- `kind get clusters`, `kubectl config get-contexts`, `tilt version`, `ko version` 확인.
-- `tilt-study` 클러스터/`kind-tilt-study` 컨텍스트 부재 시 생성 또는 정합화.
-
-2. Kind/환경 변수 정합화
-- 필요 시 `kind create cluster --name tilt-study`.
-- `source hack/kind-init.sh` 후 `KO_DOCKER_REPO`, `KUBECONTEXT` 확인.
-
-3. Tilt 기반 배포 스모크
-- `tilt up`으로 `config/overlays/kind` 배포 + `ko build` 동작 확인.
-- `.tilt-ko-image-ref` 생성 및 컨트롤러 파드 Ready 확인.
-
-4. 기능 스모크
-- `tilt trigger apply-sample` 또는 `kubectl apply -f config/samples/demo_v1alpha1_hello.yaml`.
+### Step 2 진입 준비 (최소 체크리스트)
+- [ ] kube-slint GitHub raw URL 접근 가능 여부 확인
+- [ ] RBAC 통합 범위 설계 (ClusterRole 추가 vs 기존 manager-role 확장)
+- [ ] Tiltfile 내 kube-slint 실행 로컬 리소스 추가
 - 컨트롤러 로그에서 reconcile 이벤트 확인.
 - 샘플 삭제 후 finalizer/정리 동작 확인.
 
@@ -213,3 +215,49 @@
       - 이번 단계에서는 `reconcile hit` 미관측(샘플 CR 적용 불가)
   - 상태:
     - Step 1 = `Blocked` (권한 의존 인프라 설정 미완료)
+- 2026-03-02: Step 1-E 인프라 복구 - VM 클러스터 대안 경로 실행 완료.
+  - 수행 내용:
+    - kind rootless 차단 근본 원인 확정:
+      - `/sys/fs/cgroup/user.slice/cgroup.subtree_control` 비어있음.
+      - `user.slice` 경로 파일 소유자 root(r--r--r--), 사용자 수정 불가.
+      - `Delegate=yes` systemd 설정은 반영됐으나 cgroup subtree_control 자동 위임 미발생.
+    - 대안 경로 확정: 기존 `kubernetes-admin@kubernetes` 클러스터 활용.
+      - 클러스터 구성: `k8s-master-0` (Ubuntu 24.04, k8s v1.35.1, containerd 1.7.28).
+      - 인터넷 접근 확인: `alpine:latest` 이미지 pull 테스트 성공.
+    - `Tiltfile` 수정:
+      - `allow_k8s_contexts('kubernetes-admin@kubernetes')` 로 컨텍스트 전환.
+      - `KO_DOCKER_REPO = 'ttl.sh/hello-op'` 로 레지스트리 전환(ephemeral, 24h TTL).
+      - `k8s_yaml(kustomize('config/overlays/vm'))` 로 오버레이 전환.
+      - `ko build --tags tilt-dev` 추가: Tilt outputs_image_ref_to 태그 포함 ref 요구 해소.
+    - `tilt ci` 실행:
+      - Namespace, CRD, RBAC, Deployment, Service 순차 apply 완료.
+      - ko 빌드: ttl.sh 푸시 성공 (8초 이내).
+      - 이미지 ref: `ttl.sh/hello-op/cmd-619d43fa0077945ab4581c285622fa67:tilt-dev@sha256:cecc7c4d...`
+      - 파드 `hello-operator-controller-manager-64f8f4c86b-zfnf4` Running/Ready (19초 이내).
+    - 샘플 CR 적용:
+      - `kubectl apply -f config/samples/demo_v1alpha1_hello.yaml` 성공.
+      - reconcile 로그 2회 관측(create 시 + delete 시).
+      - `kubectl delete -f config/samples/demo_v1alpha1_hello.yaml` 정상 삭제.
+  - 검증:
+    - `kubectl get pods -n hello-operator-system` => `1/1 Running`
+    - `kubectl get hellos.demo.example.com -A` => `default hello-sample` 생성/삭제 확인
+    - `tilt ci` 종료 코드 => `0` (SUCCESS. All workloads are healthy.)
+  - 정상 로그 패턴 기준 (실측 박제):
+    - Startup 시퀀스 (`cmd/main.go` 기반):
+      ```
+      2026-03-02T06:27:13Z  INFO  setup  starting manager
+      2026-03-02T06:27:13Z  INFO  controller-runtime.metrics  Starting metrics server
+      2026-03-02T06:27:13Z  INFO  setup  disabling http/2
+      2026-03-02T06:27:13Z  INFO  starting server  {"name": "health probe", "addr": "[::]:8081"}
+      I0302 06:27:13.361316  leaderelection.go:271  successfully acquired lease hello-operator-system/36afcd4c.example.com
+      2026-03-02T06:27:13Z  INFO  Starting EventSource  {"controller": "hello", "controllerKind": "Hello"}
+      2026-03-02T06:27:13Z  INFO  controller-runtime.metrics  Serving metrics server  {"bindAddress": ":8443", "secure": true}
+      2026-03-02T06:27:13Z  INFO  Starting Controller  {"controller": "hello", "controllerKind": "Hello"}
+      2026-03-02T06:27:13Z  INFO  Starting workers  {"controller": "hello", "controllerKind": "Hello", "worker count": 1}
+      ```
+    - Reconcile 패턴 (`internal/controller/hello_controller.go`):
+      ```
+      2026-03-02T06:27:31Z  INFO  reconcile hit  {"controller": "hello", "controllerGroup": "demo.example.com", "controllerKind": "Hello", "Hello": {"name":"hello-sample","namespace":"default"}, "namespace": "default", "name": "hello-sample", "reconcileID": "23cb46da-918b-45d7-a154-6d1d37f457ae", "name": {"name":"hello-sample","namespace":"default"}}
+      ```
+  - 상태:
+    - Step 1 = `Completed` (VM 클러스터 경로로 완료)

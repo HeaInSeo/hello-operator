@@ -1,25 +1,32 @@
 # Tiltfile
 
-# 안전장치: 다른 클러스터에 실수로 배포 방지
-allow_k8s_contexts('kind-tilt-study')
+# Step 1-E: kind-tilt-study 클러스터 생성 불가(rootless cgroup 위임 미완료)로
+# 기존 클러스터(kubernetes-admin@kubernetes)를 사용하는 vm 경로로 전환.
+# 레지스트리: ttl.sh (ephemeral, 24h TTL) - kind.local 대체.
+# 원래 kind 설정은 아래 주석으로 보존.
+#
+# Original kind settings (blocked):
+#   allow_k8s_contexts('kind-tilt-study')
+#   KO_DOCKER_REPO = 'kind.local'
+#   k8s_yaml(kustomize('config/overlays/kind'))
 
-KIND_CLUSTER_NAME = 'tilt-study'
-KO_DOCKER_REPO = 'kind.local'
+# 안전장치: 기존 VM 클러스터 허용
+allow_k8s_contexts('kubernetes-admin@kubernetes')
+
+KO_DOCKER_REPO = 'ttl.sh/hello-op'
 
 # 1 kustomize로 YAML 생성 -> Tilt가 apply/상태추적/로그수집까지 담당
-#k8s_yaml(kustomize('config/default'))
-k8s_yaml(kustomize('config/overlays/kind'))
+k8s_yaml(kustomize('config/overlays/vm'))
 
-# 2 ko로 이미지 빌드(그리고 kind에 로드)한 "최종 이미지 ref"를 파일로 저장
+# 2 ko로 이미지 빌드 후 ttl.sh에 푸시, "최종 이미지 ref"를 파일로 저장
 #    Tilt는 outputs_image_ref_to 파일을 읽어서 YAML의 image: controller:latest 를 자동 치환함.
-# --- build config (pulled up) ---
+# --- build config ---
 custom_build_image = 'controller'
 custom_build_cmd = (
   "bash -lc 'set -euo pipefail; "
   + "export KO_DOCKER_REPO={repo}; "
-  + "export KIND_CLUSTER_NAME={cluster}; "
-  + "ko build ./cmd > .tilt-ko-image-ref'"
-).format(repo=KO_DOCKER_REPO, cluster=KIND_CLUSTER_NAME)
+  + "ko build --tags tilt-dev ./cmd > .tilt-ko-image-ref'"
+).format(repo=KO_DOCKER_REPO)
 custom_build_deps = ['cmd', 'api', 'internal', 'go.mod', 'go.sum']
 custom_build_outputs = '.tilt-ko-image-ref'
 custom_build_skips_local_docker = True
@@ -40,15 +47,15 @@ k8s_resource(
   port_forwards=['8081:8081', '8443:8443'],
 )
 
-# 4 버튼: 샘플 CR 적용/삭제 (kubectl apply -f 디렉터리 말고 파일로!)
+# 4 버튼: 샘플 CR 적용/삭제
 local_resource(
   'apply-sample',
-  cmd='kubectl --context kind-tilt-study apply -f config/samples/demo_v1alpha1_hello.yaml',
+  cmd='kubectl apply -f config/samples/demo_v1alpha1_hello.yaml',
   auto_init=False,
 )
 
 local_resource(
   'delete-sample',
-  cmd='kubectl --context kind-tilt-study delete -f config/samples/demo_v1alpha1_hello.yaml --ignore-not-found',
+  cmd='kubectl delete -f config/samples/demo_v1alpha1_hello.yaml --ignore-not-found',
   auto_init=False,
 )
