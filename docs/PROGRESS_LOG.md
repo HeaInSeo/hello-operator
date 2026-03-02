@@ -53,19 +53,29 @@
   - cgroup v2 위임 실패 원인, 해결 절차, 로그 해석법을 초보자 대상으로 기술.
 
 ### 현재 갭
-- kube-slint: 공개된 표준 도구가 아님. Step 2에서 커스텀 설계 필요 (아래 Step 2 섹션 참조).
-- Tilt inner-loop 내 SLI 자동 체크 파이프라인은 아직 미구현.
+- kube-slint: `github.com/HeaInSeo/kube-slint v1.0.0-rc.1` 확인. Go 라이브러리 기반 E2E 하네스.
+  DX 감사 완료: `docs/KUBE_SLINT_DX_AUDIT.md` 참조.
+  주요 갭: curlpod TLS 인증서 검증, RBAC 설정 필요, CurlImage 커스터마이징 미노출.
+- Tilt 원격 UI 접근: 방화벽 포트 10350/tcp 개방 완료. `tilt up --host 0.0.0.0 --port 10350` 사용.
+  Tailscale 접속 URL: `http://100.92.45.46:10350/`.
+- Tilt inner-loop 내 SLI 자동 체크 파이프라인은 Phase 1(Mock) → Phase 2(curlpod) → Phase 3(Tiltfile) 순서로 진행 예정.
 - ttl.sh 이미지 TTL: 24h. 장기 개발 시 로컬 레지스트리 또는 영구 레지스트리로 전환 권장.
 - kind 클러스터 재생성 시 관리자 권한 필요 (`scripts/kind-cluster-init.sh` 참조).
+- SSH 포트 포워딩 및 원격 UI 접근 트러블슈팅: `docs/TROUBLESHOOTING_STEP1.md` 섹션 8 참조.
 
 ## [Roadmap]
 - Step 1: [Completed] Tilt/ko/Kind 환경 통합, 스모크 테스트, 트러블슈팅 문서화
-- Step 2: SLI 계측 도구 설계 및 RBAC 통합 (kube-slint 커스텀 구현 또는 kube-linter 연동)
+  - 원격 Tilt UI 접근: 방화벽 포트 10350 개방, TROUBLESHOOTING 섹션 8 추가
+  - kube-slint DX 감사: docs/KUBE_SLINT_DX_AUDIT.md 완료
+- Step 2: SLI 계측 도구 통합 (kube-slint v1.0.0-rc.1 기반)
+  - Phase 1: Mock Fetcher 기반 단위 테스트 (클러스터 불필요)
+  - Phase 2: curlpod Fetcher + RBAC 설정
+  - Phase 3: Tiltfile local_resource 연동
 - Step 3: Tiltfile 고도화 (Inner-loop 내 SLI 자동 체크 기능 추가)
 - Step 4: 환경별 Kustomize 오버레이(kind/vm) 정교화 및 배포 검증
 
 ## [Current Task]
-- 목표: Step 2 설계 확정 및 첫 구현 착수
+- 목표: Step 2 Phase 1 착수 (kube-slint Mock 기반 단위 테스트)
 - 체크리스트 (Step 1 완료):
   - [x] `scripts/install-tools.sh` 작성 및 실행 권한 부여
   - [x] `./bin` 로컬 설치 완료(`tilt`, `ko`, `kind`)
@@ -356,3 +366,31 @@ local_resource(
     - Step 1 = `Completed` (kind-tilt-study 경로로 최종 완료)
     - 트러블슈팅 문서 = `docs/TROUBLESHOOTING_STEP1.md` 완료
     - Step 2 설계 초안 = `[Current Task]` 섹션에 반영
+- 2026-03-02: 원격 Tilt UI 접근 설정 + kube-slint DX 감사.
+  - 수행 내용:
+    - 방화벽 포트 10350/tcp 영구 개방 (관리자 권한 적용):
+      - `sudo firewall-cmd --permanent --add-port=10350/tcp`
+      - `sudo firewall-cmd --reload`
+    - kube-slint 저장소 확인: `github.com/HeaInSeo/kube-slint v1.0.0-rc.1`
+      - Go 라이브러리 기반 SLI 측정 프레임워크 (비침투적 설계)
+      - `go get github.com/HeaInSeo/kube-slint@latest` 성공 (hello-operator go.mod에 추가)
+    - kube-slint 핵심 패키지 탐색:
+      - `test/e2e/harness`: SessionConfig, NewSession, Start, End, DefaultV3Specs
+      - `pkg/slo/spec`: SLISpec, MetricRef, ComputeSpec, Rule 타입
+      - `test/e2e/harness/discovery.go`: .slint.yaml 설정 파일 자동 탐색
+    - `docs/TROUBLESHOOTING_STEP1.md` 섹션 8 추가: 원격 Tilt UI 접근
+      - "우편함/경비원" 비유를 통한 네트워크 바인딩 개념 설명
+      - 방법 A(방화벽 포트 개방), 방법 B(SSH 터널) 제공
+    - `docs/KUBE_SLINT_DX_AUDIT.md` 신규 작성:
+      - 설치 경험, API 사용성, 통합 복잡도, 문서 품질, 갭 분석, 통합 계획 포함
+      - 주요 발견: curlpod TLS 검증 우회 옵션 없음, CurlImage 커스터마이징 미노출,
+        RBAC 설정 예시 미제공 (높은 우선순위 갭)
+  - 검증:
+    - `firewall-cmd --list-ports` => `988/tcp 10350/tcp` (포트 개방 확인)
+    - `go get github.com/HeaInSeo/kube-slint@latest` => `v1.0.0-rc.1` 추가 확인
+    - `cat go.mod | grep kube-slint` => 의존성 반영 확인
+    - Tailscale 접속 URL: `http://100.92.45.46:10350/` (tilt up --host 0.0.0.0 시 사용)
+  - 상태:
+    - 원격 Tilt UI 접근 = `설정 완료` (방화벽 포트 개방, 문서화 완료)
+    - kube-slint DX 감사 = `완료` (docs/KUBE_SLINT_DX_AUDIT.md)
+    - Step 2 착수 준비 = Phase 1(Mock 기반 단위 테스트) 즉시 가능
