@@ -1,16 +1,19 @@
 # PROGRESS_LOG
 
 ## [Technical Baseline]
-- 아키텍처: Remote-first 개발 (VM 클러스터: kubernetes-admin@kubernetes)
-  - kind 경로(kind-tilt-study)는 rootless cgroup 위임 미완료로 차단 상태.
-  - 현재 운용 경로: 기존 k8s 클러스터(k8s-master-0, Ubuntu 24.04, containerd) 사용.
+- 아키텍처: Remote-first 개발 (Kind 클러스터: kind-tilt-study)
+  - Step 1-F: rootful podman(관리자 권한)으로 kind-tilt-study 클러스터 생성 완료.
+  - 클러스터 재생성: `bash scripts/kind-cluster-init.sh` (관리자 권한 필요).
+  - 참고: `kubernetes-admin@kubernetes` 클러스터(vm 경로)도 대안으로 사용 가능.
 - 빌드/배포: `ko` 기반 이미지 빌드 + `Tilt` 오케스트레이션
-  - 레지스트리: `ttl.sh/hello-op` (ephemeral, 24h TTL) - kind.local 대체
+  - 레지스트리: `ttl.sh/hello-op` (ephemeral, 24h TTL)
   - 이미지 ref 포맷: `ttl.sh/hello-op/cmd-<hash>:tilt-dev@sha256:<digest>`
   - ko 빌드 시 `--tags tilt-dev` 필수 (Tilt outputs_image_ref_to는 태그 포함 ref 요구)
-- 검증: `kube-slint` 원격 참조(예: GitHub raw URL) 기반 Shift-left SLI 계측을 CI/inner-loop에 조기 통합
+  - kind.local 미사용: rootful/rootless podman 권한 분리로 ko 직접 연동 불가
+- 검증 파이프라인: Tilt inner-loop 기반 배포 + 샘플 CR reconcile 로그 확인
 - 로컬 격리 도구 경로:
   - 설치 스크립트: `scripts/install-tools.sh`
+  - 클러스터 초기화: `scripts/kind-cluster-init.sh` (관리자 권한 필요)
   - 로컬 바이너리: `./bin/tilt v0.35.0`, `./bin/ko 0.17.1`, `./bin/kind 0.24.0`
   - PATH 적용: `export PATH=$(pwd)/bin:$PATH`
 - SSH 포트 포워딩 기준 (확정):
@@ -20,59 +23,117 @@
   - Webhook: `localhost:9443 -> remote:9443` (webhook 활성화 시)
 - 클러스터 토폴로지:
   - Dev host: `172.30.1.83`, k8s gateway: `10.87.127.1`
-  - k8s master: `k8s-master-0` @ `10.87.127.29`, v1.35.1, containerd 1.7.28
-  - 양측 모두 인터넷 접근 가능(ttl.sh pull 검증 완료)
+  - kind master: `tilt-study-control-plane`, kind v0.24.0, k8s v1.31.0
+  - VM backup cluster: `k8s-master-0` @ `10.87.127.29`, v1.35.1, containerd 1.7.28
+  - 인터넷 접근 가능 (ttl.sh pull 양측 검증 완료)
+- cgroup 위임 영구화 (관리자 권한으로 적용):
+  - `/etc/tmpfiles.d/rootless-cgroup-delegate.conf`: 부팅 시 user.slice subtree_control 활성화
+  - `/etc/systemd/system/user.slice.d/delegate.conf`: Delegate=yes
+  - `/etc/systemd/system/user@.service.d/delegate.conf`: Delegate=yes
 
 ### 현재 저장소 기반 보강
 - Kubebuilder 스캐폴드 구조 확인: `api/v1alpha1`, `internal/controller`, `config/*`, `test/e2e`.
-- `Tiltfile` (Step 1-E 수정 후 현재 상태):
-  - `allow_k8s_contexts('kubernetes-admin@kubernetes')` - VM 클러스터 허용.
+- `Tiltfile` (Step 1-F 복원 후 현재 상태):
+  - `allow_k8s_contexts('kind-tilt-study')` - kind 클러스터 허용.
   - `KO_DOCKER_REPO = 'ttl.sh/hello-op'` - ephemeral 레지스트리.
-  - `k8s_yaml(kustomize('config/overlays/vm'))` - vm 오버레이 사용.
+  - `k8s_yaml(kustomize('config/overlays/kind'))` - kind 오버레이 사용.
   - `ko build --tags tilt-dev ./cmd` - 태그 포함 이미지 ref 출력.
   - `apply-sample`/`delete-sample` 로컬 리소스 제공.
 - `hack/kind-init.sh`:
-  - `KO_DOCKER_REPO=kind.local`, `KIND_CLUSTER_NAME=tilt-study`, `KUBECONTEXT=kind-tilt-study`를 source 방식으로 로드(kind 경로용, 현재 미사용).
+  - `KO_DOCKER_REPO=kind.local`, `KIND_CLUSTER_NAME=tilt-study`, `KUBECONTEXT=kind-tilt-study` 참조용.
 - `config/overlays`:
-  - `kind`: `imagePullPolicy: IfNotPresent`, replicas 1 (kind 경로용, 현재 미사용).
-  - `vm`: 매니저 리소스 requests/limits 강화(500m/512Mi, 2CPU/2Gi) - 현재 사용 중.
+  - `kind`: `imagePullPolicy: IfNotPresent`, replicas 1 - 현재 사용 중.
+  - `vm`: 매니저 리소스 requests/limits 강화(500m/512Mi, 2CPU/2Gi) - 대안 경로.
 - `config/default`/`config/rbac`:
   - metrics endpoint 보호용 authn/authz RBAC(`metrics_auth_role`, `metrics_reader_role`) 포함.
   - Prometheus 관련 리소스는 기본 비활성(주석) 상태.
 - `Makefile`:
   - `make test`(envtest 기반), `make test-e2e`(Kind 기반), `make lint`, `make deploy/undeploy` 제공.
+- `docs/TROUBLESHOOTING_STEP1.md`:
+  - cgroup v2 위임 실패 원인, 해결 절차, 로그 해석법을 초보자 대상으로 기술.
 
 ### 현재 갭
-- kind 경로 차단: rootless podman cgroup 위임 미완료 (`/sys/fs/cgroup/user.slice/cgroup.subtree_control` 빈 상태, root 권한 필요).
-- `kube-slint` 원격 리소스 참조 및 실행 루틴은 아직 저장소에 통합되지 않음.
+- kube-slint: 공개된 표준 도구가 아님. Step 2에서 커스텀 설계 필요 (아래 Step 2 섹션 참조).
 - Tilt inner-loop 내 SLI 자동 체크 파이프라인은 아직 미구현.
-- ttl.sh 이미지 TTL: 24h. 장기 개발 시 로컬 레지스트리 또는 영구 레지스트리로 전환 필요.
+- ttl.sh 이미지 TTL: 24h. 장기 개발 시 로컬 레지스트리 또는 영구 레지스트리로 전환 권장.
+- kind 클러스터 재생성 시 관리자 권한 필요 (`scripts/kind-cluster-init.sh` 참조).
 
 ## [Roadmap]
-- Step 1: [Completed] 현재 리포지토리의 Tilt/ko/VM 환경 통합 및 스모크 테스트
-- Step 2: kube-slint 원격 리소스(GitHub) 참조 및 RBAC 설정 통합
+- Step 1: [Completed] Tilt/ko/Kind 환경 통합, 스모크 테스트, 트러블슈팅 문서화
+- Step 2: SLI 계측 도구 설계 및 RBAC 통합 (kube-slint 커스텀 구현 또는 kube-linter 연동)
 - Step 3: Tiltfile 고도화 (Inner-loop 내 SLI 자동 체크 기능 추가)
 - Step 4: 환경별 Kustomize 오버레이(kind/vm) 정교화 및 배포 검증
 
 ## [Current Task]
-- 목표: Step 2(kube-slint 원격 리소스 통합) 진입 준비
-- 체크리스트:
+- 목표: Step 2 설계 확정 및 첫 구현 착수
+- 체크리스트 (Step 1 완료):
   - [x] `scripts/install-tools.sh` 작성 및 실행 권한 부여
   - [x] `./bin` 로컬 설치 완료(`tilt`, `ko`, `kind`)
   - [x] `.gitignore`에 `bin/` 포함 확인
   - [x] `export PATH=$(pwd)/bin:$PATH` 기준 툴 버전 검증
-  - [x] `kind create cluster --name tilt-study` 재시도 (차단: cgroup 위임 미완료)
-  - [x] `tilt up` 재시도 및 실패 원인 수집
-  - [x] Step 1-D Delegate 설정 적용 시도(권한 제약 확인)
-  - [x] Step 1-D kind/podman 우회 시도(유저 소켓 포함)
-  - [x] Step 1-E VM 클러스터 대안 경로로 전환 완료
-  - [x] Step 1 완전 성공(tilt ci 기반 기동 + 샘플 CR reconcile 로그 채집)
+  - [x] kind 클러스터 생성 (rootful podman + 관리자 권한으로 해결)
+  - [x] cgroup 위임 영구화 (tmpfiles.d + systemd drop-in)
+  - [x] `tilt ci` 기반 kind-tilt-study 배포 + reconcile 로그 채집
+  - [x] `docs/TROUBLESHOOTING_STEP1.md` 작성
+  - [x] `scripts/kind-cluster-init.sh` 작성
 
-### Step 2 진입 준비 (최소 체크리스트)
-- [ ] kube-slint GitHub raw URL 접근 가능 여부 확인
-- [ ] RBAC 통합 범위 설계 (ClusterRole 추가 vs 기존 manager-role 확장)
-- [ ] Tiltfile 내 kube-slint 실행 로컬 리소스 추가
-- 컨트롤러 로그에서 reconcile 이벤트 확인.
+### Step 2 설계 초안 (kube-slint Readiness)
+
+**현황 파악 결과 (2026-03-02):**
+- `kube-slint`는 공개된 표준 Kubernetes 도구로 존재하지 않음.
+  - 유사 도구: `kube-linter` (stackrox, YAML 정적 분석), Prometheus SLO 도구들.
+  - 결론: Step 2에서 프로젝트 전용 SLI 계측 스크립트/도구를 설계해야 함.
+- GitHub raw URL 접근: 가능 (HTTP 200/301 확인).
+- 컨트롤러 메트릭 엔드포인트: `:8443` (HTTPS, `Serving metrics server` 확인).
+
+**Step 2 RBAC 설계 초안 (메트릭 읽기 권한):**
+
+SLI 계측 도구가 컨트롤러 메트릭을 외부에서 읽으려면 아래 RBAC가 필요하다.
+현재 `config/rbac/metrics_reader_role.yaml`에 이미 기본 틀이 존재한다.
+
+```yaml
+# 제안: config/rbac/sli-reader-role.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hello-operator-sli-reader
+rules:
+- nonResourceURLs:
+  - /metrics
+  - /healthz
+  - /readyz
+  verbs:
+  - get
+---
+# 메트릭 수집 ServiceAccount 바인딩
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: hello-operator-sli-reader-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: hello-operator-sli-reader
+subjects:
+- kind: ServiceAccount
+  name: sli-checker
+  namespace: hello-operator-system
+```
+
+**Step 2 Tiltfile 통합 제안:**
+```python
+local_resource(
+  'sli-check',
+  cmd='kubectl exec -n hello-operator-system ... -- curl -sk https://localhost:8443/metrics | grep hello_',
+  auto_init=False,
+)
+```
+
+**Step 2 최소 구현 목표:**
+- [ ] SLI 체크 스크립트 작성 (`scripts/sli-check.sh`)
+- [ ] RBAC 추가 (`config/rbac/sli-reader-role.yaml`)
+- [ ] Tiltfile local_resource 연동
+- [ ] kube-linter 연동 검토 (YAML 정적 분석)
 - 샘플 삭제 후 finalizer/정리 동작 확인.
 
 5. 최소 검증 결과 고정
@@ -261,3 +322,37 @@
       ```
   - 상태:
     - Step 1 = `Completed` (VM 클러스터 경로로 완료)
+- 2026-03-02: Step 1-F kind 클러스터 복구 + 트러블슈팅 문서화 완료.
+  - 수행 내용:
+    - cgroup v2 위임 실패 근본 원인 최종 확정:
+      - `user.slice/cgroup.subtree_control` 비어있음 (controllers available but not delegated).
+      - `session-99.scope` 직접 수정 시도: `Device or resource busy` (활성 프로세스 존재로 불가).
+      - Kind 내부 검증(validateProvider): 현재 세션 스코프의 Delegate 속성 확인 방식 -> rootless 경로 차단.
+    - 관리자 권한(Administrative privileges) 적용:
+      - `/sys/fs/cgroup/user.slice/cgroup.subtree_control` 및 `user-1001.slice` 즉각 수정.
+      - 영구화: `/etc/tmpfiles.d/rootless-cgroup-delegate.conf`, systemd drop-in 생성, daemon-reload.
+    - Kind 클러스터 생성: rootful podman(`DOCKER_HOST=unix:///run/podman/podman.sock`) + 관리자 권한.
+      - `sudo env KIND_EXPERIMENTAL_PROVIDER=podman DOCKER_HOST=unix:///run/podman/podman.sock ./bin/kind create cluster --name tilt-study`
+      - 성공: `Set kubectl context to "kind-tilt-study"`
+    - Kubeconfig 병합: root의 `/root/.kube/config`에서 kind-tilt-study 컨텍스트 추출 및 heain kubeconfig에 병합.
+    - Tiltfile 복원: `kind-tilt-study` 컨텍스트 + `config/overlays/kind` 오버레이 + `ttl.sh/hello-op` 레지스트리.
+    - `tilt ci` on kind-tilt-study: `SUCCESS. All workloads are healthy.` (EXIT 0)
+    - 샘플 CR 적용: `reconcile hit` 로그 확인.
+    - `scripts/kind-cluster-init.sh` 작성 (클러스터 재생성 자동화).
+    - `docs/TROUBLESHOOTING_STEP1.md` 작성 (초보자 대상, cgroup 비유 포함).
+    - kube-slint readiness 평가: 공개 표준 도구 미존재 확인, Step 2 설계 초안 작성.
+  - 검증:
+    - `kubectl get nodes --context kind-tilt-study` => `tilt-study-control-plane Ready`
+    - `tilt ci` exit => `0` (kind-tilt-study, kind overlay)
+    - `reconcile hit` 실측 로그 (kind-tilt-study):
+      ```
+      2026-03-02T07:01:43Z  INFO  reconcile hit
+        {"controller":"hello","Hello":{"name":"hello-sample","namespace":"default"},
+         "reconcileID":"7523ad67-2ead-4c49-b50e-d19838e19d02"}
+      ```
+    - `/etc/tmpfiles.d/rootless-cgroup-delegate.conf` 생성 확인
+    - GitHub raw URL 접근: HTTP 200/301 응답 확인
+  - 상태:
+    - Step 1 = `Completed` (kind-tilt-study 경로로 최종 완료)
+    - 트러블슈팅 문서 = `docs/TROUBLESHOOTING_STEP1.md` 완료
+    - Step 2 설계 초안 = `[Current Task]` 섹션에 반영
