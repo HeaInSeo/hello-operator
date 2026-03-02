@@ -569,3 +569,135 @@ spec.PromMetric("controller_runtime_reconcile_total",
 
 갭 7.1(CurlImage)과 7.2(TLS)가 해소되어 Phase 2 착수 조건이 충족되었다.
 남은 작업: RBAC 설정 추가(`config/rbac/sli-reader.yaml`) + 실 클러스터에서 curlpod 검증.
+
+---
+
+## [Update 2026-03-03] 회귀 탐지 강화를 위한 추가 갭 분석
+
+> 이 섹션은 "코드 수정 시 SLI 지표가 회귀하는지 자동으로 탐지하기 위해 kube-slint에서
+> 구현이 필요한 지점"을 조사한 결과다.
+> JSON 아티팩트 저장 경로 확인 과정에서 파생된 분석이다.
+
+### 배경
+
+`session.End()` 반환값(`Summary`)이 JSON 파일로 저장되려면 `SessionConfig.ArtifactsDir`가
+비어있지 않아야 한다 (`session.go:ShouldWriteArtifacts()`). 이 조건을 확인하는 과정에서
+회귀 방어선 전체가 비활성 상태임을 발견했다.
+
+### 신규 갭 목록
+
+#### [갭 A] reconcile_error_delta JudgeSpec 규칙 주석 처리
+
+**파일**: `test/e2e/harness/presets.go:52`
+**심각도**: 높음
+
+```go
+// 현재 상태 (비활성)
+// Judge: &spec.JudgeSpec{Rules: []spec.Rule{{Op: spec.OpGT, Target: 0, Level: spec.LevelFail}}},
+```
+
+에러 delta가 0 초과여도 `reconcile_error_delta`의 status가 `"pass"`로 출력된다.
+오퍼레이터 코드에서 에러를 유발하는 회귀가 발생해도 테스트가 통과한다.
+
+**필요 조치**: 주석 해제 (kube-slint presets.go 한 줄 수정).
+
+단, 갭 B(레이블 불일치)가 해소되지 않으면 이 규칙이 발동하더라도 `"skip"`으로 처리되어
+실질적 효과가 없다. 갭 A와 갭 B는 함께 해결해야 한다.
+
+#### [갭 B] 레이블 부분 일치(partial label match) 미지원 - 기존 갭 N1 보완
+
+**파일**: `pkg/slo/engine/engine.go` (입력 조회 로직), `test/e2e/harness/presets.go:37~49`
+**심각도**: 높음 (갭 A 효과를 무력화)
+
+이전 감사(갭 N1)에서 발견한 내용의 엔진 레벨 원인 분석:
+
+- spec 조회 키: `controller_runtime_reconcile_total{result="success"}`
+- 실제 메트릭 키: `controller_runtime_reconcile_total{controller="hello",result="success"}`
+- 엔진이 exact key match를 수행하므로 레이블 집합이 다르면 `"skip"` 처리
+
+결과적으로 `reconcile_success_delta`와 `reconcile_error_delta`가 항상 `"skip"`된다.
+
+**필요 조치 (선택지)**:
+1. **단기**: presets.go의 spec 입력을 `{controller="hello", result="success"}` 형태의 full label로 교체.
+   단, controller 이름이 오퍼레이터마다 달라 범용 프리셋으로 부적합.
+2. **중기 (권장)**: 엔진의 metric lookup에 레이블 서브셋 매칭 지원.
+   spec에 `{result="success"}` 지정 시 `result="success"`를 포함하는 모든 시리즈를 합산.
+
+#### [갭 C] workqueue_depth_end ComputeMode 불일치
+
+**파일**: `test/e2e/harness/presets.go:89`
+**심각도**: 낮음
+
+```go
+Compute: spec.ComputeSpec{Mode: spec.ComputeSingle}, // 시작 스냅샷
+// 코드 주석: "v4에서는 end-only gauge 권장"
+```
+
+gauge 타입인 `workqueue_depth`는 측정 창이 닫히는 시점(End)의 값이 의미 있다.
+"테스트 종료 후 큐가 비었는가?"를 확인해야 하는데 시작 시점 값을 본다.
+
+**필요 조치**: `ComputeEnd` 모드를 `pkg/slo/engine/engine.go`에 구현 후 프리셋 교체.
+
+#### [갭 D] cross-run 회귀 탐지(baseline 비교) 부재
+
+**심각도**: 중간 (절대값 게이팅으로 부분 대체 가능)
+
+kube-slint는 단일 실행의 절대값 게이팅만 지원한다.
+"이전 실행 대비 수치가 나빠졌는가?"를 판단하는 기능이 없다.
+
+`Summary` 구조체에는 비교를 위한 기반 필드가 있다:
+- `Config.RunID` - 실행 고유 ID
+- `Config.Tags` - 임의 메타데이터 (git_commit, branch 등 삽입 가능)
+- `Results[].Value` - 수치 결과
+
+**필요 조치 (신규 기능)**:
+
+```
+pkg/slo/regression/comparator.go (신규)
+  - LoadBaseline(path string) (*Summary, error)
+  - Compare(baseline, current *Summary, tolerance float64) (*RegressionReport, error)
+  - RegressionReport.HasRegression() bool
+```
+
+**사용 패턴**:
+1. 첫 실행 후 JSON을 `testdata/sli-baseline.json`으로 커밋
+2. 이후 실행마다 현재 JSON과 baseline을 Compare() 호출
+3. 허용 범위 초과 시 테스트 실패
+
+#### [갭 E] GateOnLevel 기본값 "none" (hello-operator 설정 문제)
+
+**파일**: `test/e2e/harness/propagation.go:110`
+**심각도**: 높음 (갭 A가 활성화되어도 테스트 실패로 전파 안 됨)
+
+```go
+if gateOnLevel == "" || gateOnLevel == "none" {
+    return nil // 게이팅 없음
+}
+```
+
+`SessionConfig.GateOnLevel`을 설정하지 않으면 Judge 규칙이 `"fail"`을 마킹해도
+`session.End()`가 에러를 반환하지 않는다.
+
+이것은 kube-slint 코드 수정이 아닌 **hello-operator 테스트 설정 문제**이나,
+`.slint.yaml` discovery를 통한 기본값 제공을 kube-slint 측에서 고려할 수 있다.
+
+**즉각 해결 가능**: hello-operator SessionConfig에 `GateOnLevel: "fail"` 추가.
+
+### 갭 우선순위 요약
+
+| 갭 | 위치 | 난이도 | 효과 |
+|----|------|--------|------|
+| A: Judge 주석 해제 | kube-slint presets.go | 한 줄 | 에러 delta 마킹 활성화 |
+| E: GateOnLevel 설정 | hello-operator SessionConfig | 한 줄 | 테스트 실패 전파 |
+| B: 레이블 부분 일치 | kube-slint engine | 중간 | A/E의 실질적 효과 확보 |
+| C: ComputeEnd 구현 | kube-slint engine | 중간 | gauge 정확도 개선 |
+| D: cross-run 비교 | kube-slint 신규 패키지 | 높음 | 추세 기반 회귀 탐지 |
+
+**갭 A + E는 코드 한 줄씩으로 즉시 해결 가능하나, 갭 B가 없으면 A의 효과가 없다.
+실질적인 첫 번째 회귀 방어선은 갭 A + B + E를 묶어서 해결하는 것이다.**
+
+### 2026-03-03 완료 사항
+
+- `test/e2e/sli_integration_test.go`: `ArtifactsDir: "/tmp/sli-results"` 추가
+- `test/e2e/sli_e2e_test.go`: `ArtifactsDir: "/tmp/sli-results"` 추가
+- 저장 경로: `/tmp/sli-results/sli-summary.hello-operator-sli.hello-sample-create.json`

@@ -438,3 +438,22 @@ local_resource(
   - 상태:
     - Step 2 Phase 2 = `Completed` (RBAC + E2E 테스트 + Tiltfile 연동)
     - Step 2 Phase 3 (실 클러스터 검증) = 오퍼레이터 기동 후 즉시 실행 가능
+- 2026-03-03: SLI 계측 결과 JSON 저장 활성화 + kube-slint 회귀 탐지 갭 분석.
+  - 수행 내용:
+    - `test/e2e/sli_integration_test.go` SessionConfig에 `ArtifactsDir: "/tmp/sli-results"` 추가.
+    - `test/e2e/sli_e2e_test.go` SessionConfig에 `ArtifactsDir: "/tmp/sli-results"` 추가.
+    - 저장 파일명 패턴: `sli-summary.hello-operator-sli.hello-sample-create.json`
+    - kube-slint 회귀 탐지 갭 분석 수행 및 `docs/KUBE_SLINT_DX_AUDIT.md`에 추가.
+      - 갭 A: reconcile_error_delta JudgeSpec 주석 처리 (presets.go:52)
+      - 갭 B: 레이블 부분 일치 미지원 (engine 수준, 갭 A 효과 무력화)
+      - 갭 C: workqueue_depth_end ComputeMode 불일치 (ComputeSingle vs 권장 ComputeEnd)
+      - 갭 D: cross-run 회귀 탐지(baseline 비교) 부재 (신규 pkg/slo/regression 필요)
+      - 갭 E: GateOnLevel 기본값 "none" (hello-operator SessionConfig 설정 필요)
+  - 검증:
+    - `go vet ./test/e2e/` => 컴파일 오류 없음
+    - `go test ./test/e2e/ -run TestHelloSLIMock -v -timeout 30s` => PASS (ArtifactsDir 추가 후 회귀 없음)
+    - `/tmp/sli-results/` 디렉토리에 JSON 파일 생성 확인 (테스트 실행 후)
+  - 상태:
+    - SLI JSON 저장 = `활성화` (두 테스트 파일 모두 ArtifactsDir 설정 완료)
+    - kube-slint 갭 분석 = `완료` (docs/KUBE_SLINT_DX_AUDIT.md [Update 2026-03-03] 섹션)
+    - 다음 단계 = kube-slint 갭 A+B+E 해결 (presets.go Judge 주석 해제 + 레이블 매칭 개선)

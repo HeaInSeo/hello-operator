@@ -77,6 +77,7 @@ func TestHelloSLIE2E(t *testing.T) {
 		ServiceAccountName:    sliServiceAccountName,
 		Token:                 token,
 		TLSInsecureSkipVerify: true,
+		ArtifactsDir:          "/tmp/sli-results",
 	})
 
 	session.Start()

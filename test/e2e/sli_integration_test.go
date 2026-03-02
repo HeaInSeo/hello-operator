@@ -166,6 +166,7 @@ func TestHelloSLIMock(t *testing.T) {
 		TestCase:           "hello-sample-create",
 		Suite:              "hello-operator-sli",
 		Fetcher:            fetcher,
+		ArtifactsDir:       "/tmp/sli-results",
 	})
 
 	// 측정 창 열기
