@@ -57,3 +57,13 @@ local_resource(
   cmd='kubectl --context kind-tilt-study delete -f config/samples/demo_v1alpha1_hello.yaml --ignore-not-found',
   auto_init=False,
 )
+
+# 5 kube-slint Phase 1: Mock 기반 SLI 파이프라인 검증 (클러스터 불필요)
+#    실제 K8s 클러스터 없이 kube-slint 하네스 측정 로직을 로컬에서 검증한다.
+#    httptest.Server로 /metrics 응답을 모의하여 reconcile_total_delta = 3 여부 확인.
+local_resource(
+  'sli-mock-test',
+  cmd='go test ./test/e2e/ -run TestHelloSLIMock -v -count=1 -timeout 30s',
+  auto_init=False,
+  deps=['test/e2e/sli_integration_test.go'],
+)

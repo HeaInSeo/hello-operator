@@ -3,6 +3,7 @@ module github.com/HeaInSeo/hello-operator
 go 1.24.6
 
 require (
+	github.com/HeaInSeo/kube-slint v1.0.0-rc.1.0.20260302080738-58c0d8811314
 	github.com/onsi/ginkgo/v2 v2.22.0
 	github.com/onsi/gomega v1.36.1
 	k8s.io/apimachinery v0.34.1
@@ -12,7 +13,6 @@ require (
 
 require (
 	cel.dev/expr v0.24.0 // indirect
-	github.com/HeaInSeo/kube-slint v1.0.0-rc.1 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect

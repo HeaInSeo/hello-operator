@@ -435,3 +435,137 @@ hello-operator에 kube-slint를 통합하기 위한 단계별 계획:
 
 **종합 평가**: Phase 1(Mock 기반 단위 테스트)은 즉시 착수 가능하며, Phase 2-3(실 클러스터
 연동)은 HTTPS 및 RBAC 설정 문제 해결 후 진행을 권장한다.
+
+---
+
+## [Update 2026-03-02] kube-slint main 브랜치 변경 사항
+
+> 이 섹션은 이전 감사(v1.0.0-rc.1)에서 발견한 갭이 kube-slint 업데이트로
+> 해소되었는지 추적한다. 기존 내용은 유지하고 이어 붙이는 방식으로 관리한다.
+
+### 감사 기준 버전
+
+- 감사 기준: `v1.0.0-rc.1` (2026-03-02 최초 감사)
+- 이번 업데이트: commit `58c0d88` (`feat(harness): Add SessionConfig knobs for TLS and curl image overrides`)
+- go.mod 반영 버전: `v1.0.0-rc.1.0.20260302080738-58c0d8811314`
+
+### 갭 해소 현황
+
+#### [해소됨] 갭 7.1: CurlImage 커스터마이징 불가
+
+**이전 상태** (v1.0.0-rc.1):
+`sessionImpl.CurlImage`가 `SessionConfig`에 노출되지 않아 사용자가 변경 불가.
+
+**현재 상태** (58c0d88):
+`SessionConfig`에 `CurlImage string` 필드 추가됨.
+
+```go
+// 이제 SessionConfig에서 직접 설정 가능
+session := harness.NewSession(harness.SessionConfig{
+    CurlImage: "ttl.sh/curlimages-curl:latest", // Docker Hub 대신 캐시 이미지 사용
+    // ...
+})
+```
+
+kind 환경에서 Docker Hub rate limit 우려 없이 사설 미러 또는 ttl.sh에 캐시된 이미지를
+사용할 수 있게 되었다.
+
+#### [해소됨] 갭 7.2: HTTPS TLS 검증 건너뛰기 옵션 없음
+
+**이전 상태** (v1.0.0-rc.1):
+curlpod Fetcher가 자체 서명 인증서를 가진 메트릭 엔드포인트에 접근 시 TLS 검증 실패.
+
+**현재 상태** (58c0d88):
+`SessionConfig`에 `TLSInsecureSkipVerify bool` 필드 추가됨.
+curlpod 실행 시 `-k` 플래그가 자동으로 추가된다.
+
+```go
+// controller-runtime의 자체 서명 인증서 우회
+session := harness.NewSession(harness.SessionConfig{
+    TLSInsecureSkipVerify: true,
+    // ...
+})
+```
+
+이로써 Phase 2(curlpod Fetcher + 실 클러스터 연동)의 가장 큰 기술적 장벽이 해소되었다.
+
+### 잔존 갭
+
+#### [미해소] 갭 7.3: RBAC 및 ServiceAccount 설정 예시 미제공
+
+상태 변화 없음. hello-operator에 RBAC 설정을 직접 추가해야 한다.
+
+```yaml
+# 추가 필요: config/rbac/sli-reader.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sli-checker
+  namespace: hello-operator-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sli-checker-metrics-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: hello-operator-metrics-reader
+subjects:
+- kind: ServiceAccount
+  name: sli-checker
+  namespace: hello-operator-system
+```
+
+#### [신규 발견] 갭 N1: SLI 스펙 라벨 필터와 실제 메트릭 라벨 불일치
+
+**발견 경위**: Phase 1 Mock 테스트(`test/e2e/sli_integration_test.go`) 실행 중 발견.
+
+**현상**:
+`DefaultV3Specs()`의 `reconcile_success_delta`는 아래 키를 조회한다:
+```
+controller_runtime_reconcile_total{result="success"}
+```
+
+하지만 controller-runtime이 실제로 노출하는 메트릭은:
+```
+controller_runtime_reconcile_total{controller="hello",result="success"}
+```
+
+라벨 집합이 다르므로 `promkey.Canonicalize`가 서로 다른 키를 생성하여 일치하지 않는다.
+결과적으로 `reconcile_success_delta`는 `status=skip`으로 처리된다.
+
+**실측 결과**:
+```
+reconcile_total_delta    status=pass   value=3   (레이블 없는 합산 키 → 정상)
+reconcile_success_delta  status=skip   value=nil (레이블 불일치 → 건너뜀)
+reconcile_error_delta    status=skip   value=nil (레이블 불일치 → 건너뜀)
+```
+
+**해결 방안**:
+커스텀 SLI 스펙 정의 시 `controller` 라벨을 명시하거나, `reconcile_total_delta`(레이블
+없는 합산)를 주 지표로 사용한다.
+
+```go
+// 권장: controller 라벨 포함하여 정확히 일치
+spec.PromMetric("controller_runtime_reconcile_total",
+    spec.Labels{"controller": "hello", "result": "success"}),
+```
+
+#### [신규 발견] 갭 N2: Tiltfile 연동 예시 미제공 (unchanged)
+
+상태 변화 없음. hello-operator Tiltfile에 직접 추가 필요 (현재 `sli-mock-test` 추가 완료).
+
+### Phase 1 완료 요약 (2026-03-02)
+
+`test/e2e/sli_integration_test.go` 구현 완료.
+
+- 클러스터 불필요: `httptest.Server` 2개(baseline, after-reconcile)로 메트릭 시뮬레이션
+- `reconcile_total_delta = 3` 검증 통과 (start=0→end=3)
+- Tiltfile `sli-mock-test` local_resource 추가: `go test ./test/e2e/ -run TestHelloSLIMock`
+- 실행 결과: `ok 0.10s` (PASS)
+
+### Phase 2 준비 상태
+
+갭 7.1(CurlImage)과 7.2(TLS)가 해소되어 Phase 2 착수 조건이 충족되었다.
+남은 작업: RBAC 설정 추가(`config/rbac/sli-reader.yaml`) + 실 클러스터에서 curlpod 검증.
