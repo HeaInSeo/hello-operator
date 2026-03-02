@@ -16,6 +16,16 @@
   - 클러스터 초기화: `scripts/kind-cluster-init.sh` (관리자 권한 필요)
   - 로컬 바이너리: `./bin/tilt v0.35.0`, `./bin/ko 0.17.1`, `./bin/kind 0.24.0`
   - PATH 적용: `export PATH=$(pwd)/bin:$PATH`
+- 노트북에서 Tilt UI 접근 방법 (2가지):
+  - 방법 A (Tailscale 직접 접속, 현재 설정 완료):
+    - 서버: `tilt up --host 0.0.0.0 --port 10350`
+    - 노트북 브라우저: `http://100.92.45.46:10350/`
+    - 전제: 방화벽 10350/tcp 영구 개방 완료, Tailscale 연결 중
+  - 방법 B (SSH 터널, 방화벽 변경 불필요):
+    - 노트북: `ssh -L 10350:localhost:10350 heain@<서버IP>`
+    - 서버: `tilt up --port 10350` (--host 생략 가능)
+    - 노트북 브라우저: `http://localhost:10350/`
+  - 상세 설명: `docs/TROUBLESHOOTING_STEP1.md` 섹션 8 참조
 - SSH 포트 포워딩 기준 (확정):
   - Tilt UI: `localhost:10350 -> remote:10350`
   - Health probe: `localhost:8081 -> remote:8081`
@@ -68,14 +78,14 @@
   - 원격 Tilt UI 접근: 방화벽 포트 10350 개방, TROUBLESHOOTING 섹션 8 추가
   - kube-slint DX 감사: docs/KUBE_SLINT_DX_AUDIT.md 완료
 - Step 2: SLI 계측 도구 통합 (kube-slint v1.0.0-rc.1 기반)
-  - Phase 1: Mock Fetcher 기반 단위 테스트 (클러스터 불필요)
-  - Phase 2: curlpod Fetcher + RBAC 설정
-  - Phase 3: Tiltfile local_resource 연동
+  - Phase 1: [Completed] Mock Fetcher 기반 단위 테스트 (클러스터 불필요)
+  - Phase 2: [Completed] curlpod Fetcher + RBAC 설정 + Tiltfile local_resource 연동
+  - Phase 3: 실제 클러스터에서 E2E_SLI=1 로 검증
 - Step 3: Tiltfile 고도화 (Inner-loop 내 SLI 자동 체크 기능 추가)
 - Step 4: 환경별 Kustomize 오버레이(kind/vm) 정교화 및 배포 검증
 
 ## [Current Task]
-- 목표: Step 2 Phase 1 착수 (kube-slint Mock 기반 단위 테스트)
+- 목표: Step 2 Phase 2 완료 (curlpod fetcher + RBAC)
 - 체크리스트 (Step 1 완료):
   - [x] `scripts/install-tools.sh` 작성 및 실행 권한 부여
   - [x] `./bin` 로컬 설치 완료(`tilt`, `ko`, `kind`)
@@ -394,3 +404,37 @@ local_resource(
     - 원격 Tilt UI 접근 = `설정 완료` (방화벽 포트 개방, 문서화 완료)
     - kube-slint DX 감사 = `완료` (docs/KUBE_SLINT_DX_AUDIT.md)
     - Step 2 착수 준비 = Phase 1(Mock 기반 단위 테스트) 즉시 가능
+- 2026-03-02: Step 2 Phase 2 - curlpod Fetcher + RBAC 설정 완료.
+  - 수행 내용:
+    - kube-slint 최신 커밋(58c0d88) 확인: `TLSInsecureSkipVerify`, `CurlImage` SessionConfig 노출 완료.
+    - `config/rbac/sli_checker_serviceaccount.yaml` 작성:
+      - SA `sli-checker` (kustomize 후: `hello-operator-sli-checker`, ns: `hello-operator-system`)
+    - `config/rbac/sli_checker_clusterrolebinding.yaml` 작성:
+      - `sli-checker` SA를 기존 `metrics-reader` ClusterRole에 바인딩.
+      - kustomize 후: CRB `hello-operator-sli-checker-metrics-reader`, roleRef `hello-operator-metrics-reader`.
+    - `config/rbac/kustomization.yaml` 업데이트: 새 파일 2개 추가.
+    - `test/e2e/sli_e2e_test.go` 작성 (//go:build e2e + E2E_SLI=1 가드):
+      - `kubectl create token hello-operator-sli-checker`로 Bearer 토큰 발급.
+      - `harness.NewSession`에 `TLSInsecureSkipVerify: true`, `ServiceAccountName`, `Token` 주입.
+      - 오퍼레이터 파드 Ready 대기 → CR 적용 → 5초 대기 → session.End().
+      - `reconcile_total_delta >= 1`, `reconcile_error_delta = 0` 검증.
+      - E2E_SLI 미설정 시 Skip (회귀 방지).
+    - `Tiltfile` 업데이트: `sli-e2e-test` local_resource 추가 (auto_init=False).
+  - 검증:
+    - `kubectl kustomize config/overlays/kind | grep sli-checker` => `hello-operator-sli-checker` SA + CRB 확인
+    - `go vet -tags e2e ./test/e2e/` => 컴파일 오류 없음
+    - `go test -tags e2e -run TestHelloSLIE2E ./test/e2e/` (E2E_SLI 미설정) => SKIP 동작 확인
+    - `go test ./test/e2e/ -run TestHelloSLIMock` => PASS (회귀 없음)
+  - 실행 방법 (실제 클러스터 사용 시):
+    ```bash
+    # 1. 오퍼레이터 배포 (RBAC 포함)
+    kubectl apply -k config/overlays/kind
+    # 또는 tilt up 으로 기동
+
+    # 2. E2E SLI 테스트 실행
+    E2E_SLI=1 go test ./test/e2e/ -run TestHelloSLIE2E -v -tags e2e -timeout 3m
+    # 또는 Tilt UI에서 sli-e2e-test 버튼 클릭
+    ```
+  - 상태:
+    - Step 2 Phase 2 = `Completed` (RBAC + E2E 테스트 + Tiltfile 연동)
+    - Step 2 Phase 3 (실 클러스터 검증) = 오퍼레이터 기동 후 즉시 실행 가능

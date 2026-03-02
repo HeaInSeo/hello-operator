@@ -25,4 +25,8 @@ resources:
 - hello_admin_role.yaml
 - hello_editor_role.yaml
 - hello_viewer_role.yaml
+# [SLI] Service account and binding for kube-slint curlpod metrics reader.
+# Grants GET /metrics permission to the sli-checker service account.
+- sli_checker_serviceaccount.yaml
+- sli_checker_clusterrolebinding.yaml
 

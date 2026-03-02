@@ -59,7 +59,7 @@ func (f *mockMetricsFetcher) Fetch(ctx context.Context, at time.Time) (fetch.Sam
 	if err != nil {
 		return fetch.Sample{}, fmt.Errorf("mock fetcher: http get (call=%d): %w", n, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -139,14 +139,14 @@ func TestHelloSLIMock(t *testing.T) {
 	// 시작 스냅샷 서버: idle 상태 메트릭
 	baselineSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		fmt.Fprint(w, metricsBaseline)
+		_, _ = fmt.Fprint(w, metricsBaseline)
 	}))
 	defer baselineSrv.Close()
 
 	// 종료 스냅샷 서버: Reconcile 3회 완료 후 메트릭
 	afterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		fmt.Fprint(w, metricsAfterReconcile)
+		_, _ = fmt.Fprint(w, metricsAfterReconcile)
 	}))
 	defer afterSrv.Close()
 

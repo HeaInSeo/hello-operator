@@ -67,3 +67,14 @@ local_resource(
   auto_init=False,
   deps=['test/e2e/sli_integration_test.go'],
 )
+
+# 6 kube-slint Phase 2: curlpod fetcher 기반 실제 클러스터 SLI 측정
+#    hello-operator-sli-checker SA의 Bearer 토큰으로 HTTPS /metrics 엔드포인트 접근.
+#    CR 생성 후 reconcile_total_delta >= 1 검증.
+#    전제조건: 오퍼레이터 배포 완료, sli-checker RBAC 적용 완료.
+local_resource(
+  'sli-e2e-test',
+  cmd='E2E_SLI=1 go test ./test/e2e/ -run TestHelloSLIE2E -v -tags e2e -count=1 -timeout 3m',
+  auto_init=False,
+  deps=['test/e2e/sli_e2e_test.go'],
+)
