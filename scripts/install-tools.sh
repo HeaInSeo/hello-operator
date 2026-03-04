@@ -4,7 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN_DIR="${ROOT_DIR}/bin"
 
-TILT_VERSION="${TILT_VERSION:-v0.35.0}"
+# v0.36.3은 glibc 2.32+ 요구 (RHEL 8 / glibc 2.28 비호환).
+# v0.36.1이 glibc 2.28에서 동작하는 최신 호환 버전.
+TILT_VERSION="${TILT_VERSION:-v0.36.1}"
 KO_VERSION="${KO_VERSION:-v0.17.1}"
 KIND_VERSION="${KIND_VERSION:-v0.24.0}"
 
