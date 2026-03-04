@@ -4,8 +4,15 @@
 # - 클러스터: rootful podman(관리자 권한)으로 생성된 tilt-study kind 클러스터.
 # - 레지스트리: ttl.sh/hello-op (ephemeral, 24h TTL).
 #   kind.local은 rootful/rootless podman 권한 분리로 인해 ko와 직접 연동 불가.
-#   ttl.sh는 kind 노드가 인터넷을 통해 pull 가능하므로 호환.
 # - 오버레이: config/overlays/kind (imagePullPolicy: IfNotPresent).
+#
+# [주의] Kind 노드 이미지 풀 구조:
+#   kind-tilt-study 노드(rootful podman 컨테이너)는 인터넷 경로가 없어
+#   ttl.sh에서 직접 pull 불가. 대신:
+#   1. ko가 ttl.sh에 push (호스트 rootless podman → 인터넷 가능)
+#   2. scripts/kind-image-load.sh 가 Kind 노드 containerd에 직접 import
+#   3. .tilt-ko-image-ref 에서 digest(@sha256:...) 제거 → tag-only 참조 사용
+#      (imagePullPolicy: IfNotPresent + tag-only → 캐시된 이미지 사용)
 
 # 안전장치: kind 클러스터에만 배포 허용
 allow_k8s_contexts('kind-tilt-study')
@@ -15,15 +22,20 @@ KO_DOCKER_REPO = 'ttl.sh/hello-op'
 # 1 kustomize로 YAML 생성 -> Tilt가 apply/상태추적/로그수집까지 담당
 k8s_yaml(kustomize('config/overlays/kind'))
 
-# 2 ko로 이미지 빌드 후 ttl.sh에 푸시, "최종 이미지 ref"를 파일로 저장
+# 2 ko로 이미지 빌드 후 ttl.sh에 푸시, Kind 노드 containerd에 직접 import
 #    Tilt는 outputs_image_ref_to 파일을 읽어서 YAML의 image: controller:latest 를 자동 치환함.
-#    주의: --tags tilt-dev 필수. Tilt는 순수 digest ref(@sha256:...)를 거부함.
+#    주의1: --tags tilt-dev 필수. Tilt는 순수 digest ref(@sha256:...)를 거부함.
+#    주의2: Kind 노드는 인터넷 미연결. kind-image-load.sh 로 containerd에 직접 로드 후
+#           digest를 제거한 tag-only ref를 파일에 기록한다.
 # --- build config ---
 custom_build_image = 'controller'
 custom_build_cmd = (
   "bash -lc 'set -euo pipefail; "
   + "export KO_DOCKER_REPO={repo}; "
-  + "ko build --tags tilt-dev ./cmd > .tilt-ko-image-ref'"
+  + "ko build --tags tilt-dev ./cmd > .tilt-ko-image-ref; "
+  + "IMAGE_REF=$(cat .tilt-ko-image-ref); "
+  + "bash scripts/kind-image-load.sh \"$IMAGE_REF\"; "
+  + "sed -i \"s|@sha256:[a-f0-9]*||\" .tilt-ko-image-ref'"
 ).format(repo=KO_DOCKER_REPO)
 custom_build_deps = ['cmd', 'api', 'internal', 'go.mod', 'go.sum']
 custom_build_outputs = '.tilt-ko-image-ref'

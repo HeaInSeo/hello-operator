@@ -701,3 +701,241 @@ if gateOnLevel == "" || gateOnLevel == "none" {
 - `test/e2e/sli_integration_test.go`: `ArtifactsDir: "/tmp/sli-results"` 추가
 - `test/e2e/sli_e2e_test.go`: `ArtifactsDir: "/tmp/sli-results"` 추가
 - 저장 경로: `/tmp/sli-results/sli-summary.hello-operator-sli.hello-sample-create.json`
+
+---
+
+## [Update 2026-03-04] Phase 3 실 클러스터 E2E 검증 중 발견된 갭
+
+> Phase 3 (`E2E_SLI=1 go test ./test/e2e/ -run TestHelloSLIE2E`) 실행 과정에서
+> kind-tilt-study 클러스터에서 두 가지 구조적 갭과 스크립트 버그를 추가로 발견했다.
+
+### 환경
+
+- 클러스터: kind-tilt-study (kind v0.24.0, k8s v1.31.0, rootful podman)
+- kube-slint: `v1.0.0-rc.1.0.20260302080738-58c0d8811314`
+- 테스트 결과: PASS 달성 (workaround 적용 후)
+
+---
+
+### [갭 F] curlpod imagePullPolicy 미설정 - kind 환경 ImagePullBackOff 유발
+
+**심각도**: 높음 (air-gapped / 인터넷 미연결 kind 환경에서 완전 차단)
+**파일**: `pkg/slo/fetch/curlpod/client.go` (RunOnce 함수)
+
+**현상**:
+
+curlpod 스펙(`kubectl run` 명령의 `--overrides` JSON)에 `imagePullPolicy`가 명시되지 않음.
+Kubernetes 기본값 적용 규칙:
+- 태그가 `latest`이거나 없을 경우 → `Always` (항상 레지스트리에서 pull 시도)
+- 태그가 구체적인 버전 태그일 경우 → `IfNotPresent` (로컬 캐시 우선)
+
+기본 CurlImage는 `"curlimages/curl:latest"` (latest 태그) → `imagePullPolicy: Always`.
+kind-tilt-study 클러스터의 노드는 docker.io에 접근 불가 (`no route to host`).
+결과: `ImagePullBackOff` → curlpod Fetch 실패.
+
+**실측 증거**:
+```
+Warning  Failed   ...  Failed to pull image "curlimages/curl:latest":
+  failed to do request: Head "https://registry-1.docker.io/v2/curlimages/curl/manifests/latest":
+  dial tcp 44.217.10.11:443: connect: no route to host
+```
+
+**해결 방안**:
+
+**(권장) kube-slint 수정**: `Client` 구조체에 `ImagePullPolicy string` 필드 추가.
+`RunOnce()`의 파드 스펙에 `"imagePullPolicy": c.ImagePullPolicy` 삽입.
+기본값을 `"IfNotPresent"`로 설정하여 air-gapped 환경에서도 동작하게 한다.
+
+```go
+// 제안: pkg/slo/fetch/curlpod/client.go
+type Client struct {
+    // ...기존 필드...
+    ImagePullPolicy string // e.g. "IfNotPresent" | "Always" | "Never"
+}
+
+// New() 기본값
+return &Client{
+    // ...
+    ImagePullPolicy: "IfNotPresent", // 기존 동작보다 안전한 기본값
+}
+```
+
+**(현재 workaround)**: `SessionConfig.CurlImage`에 non-latest 태그를 지정한다.
+```go
+// "kind-cached" 태그 → imagePullPolicy: IfNotPresent (기본값)
+// 단, 이미지를 미리 kind containerd에 로드해야 함
+session := harness.NewSession(harness.SessionConfig{
+    CurlImage: "curlimages/curl:kind-cached",
+    // ...
+})
+```
+
+이미지 사전 로드 절차:
+```bash
+# 호스트에서 pull 후 kind-cached 태그 부여 (non-latest)
+podman tag curlimages/curl:latest curlimages/curl:kind-cached
+podman save curlimages/curl:kind-cached -o /tmp/curl.tar
+# kind 노드 containerd에 import (privileged pod 방식)
+# → scripts/kind-image-load.sh 참조
+```
+
+---
+
+### [갭 G] session.Start() 미스냅샷 - 엔진 설계와 curlpod fetcher 불일치
+
+**심각도**: 높음 (curlpod fetcher 사용 시 delta 항상 0)
+**파일**: `test/e2e/harness/session.go` (Start, End), `pkg/slo/engine/engine.go` (Execute)
+
+**현상**:
+
+`engine.Execute()`는 `End()` 내부에서 fetcher를 두 번 호출하여 delta를 계산한다:
+
+```go
+// engine.go
+start, _ := e.fetcher.Fetch(ctx, cfg.StartedAt)   // 첫 번째 호출 (현재 상태)
+end, _   := e.fetcher.Fetch(ctx, cfg.FinishedAt)   // 두 번째 호출 (현재 상태)
+delta    := end.Values[key] - start.Values[key]
+```
+
+curlpod fetcher는 `at time.Time` 파라미터를 무시하고 항상 현재 상태를 반환한다:
+
+```go
+// fetcher_curlpod.go
+func (f *curlPodFetcher) Fetch(_ context.Context, at time.Time) (fetch.Sample, error) {
+    // at 파라미터 미사용 - 항상 현재 상태 반환
+    raw, _ := f.pod.Run(podCtx, ...)
+    return fetch.Sample{At: at, Values: values}, nil
+}
+```
+
+`session.Start()`는 시작 시각만 기록하고 메트릭 스냅샷을 수집하지 않는다:
+
+```go
+// session.go
+func (s *Session) Start() {
+    s.impl.started = now()  // 시각만 기록, fetcher 호출 없음
+}
+```
+
+결과:
+1. `session.Start()` 호출 후 CR 적용 → Reconcile 완료 → 5초 대기
+2. `session.End()` 호출 → engine이 `Start` fetch, `End` fetch를 순차 실행
+3. 두 fetch 모두 CR 적용 후(post-reconcile) 상태를 반환
+4. delta = post - post = 0
+
+**실측 결과** (workaround 적용 전):
+```
+reconcile_total_delta  status=pass  value=0   ← 의도와 다름
+```
+
+**설계 불일치 원인**:
+
+엔진 설계는 Prometheus range query처럼 임의 시각의 메트릭을 조회할 수 있는 fetcher를
+가정한다. curlpod fetcher는 현재 상태만 반환하는 실시간 fetcher이므로, 엔진이 두 번
+호출해도 서로 다른 과거 시점을 볼 수 없다.
+
+**kube-slint 개선 제안**:
+
+`session.Start()`가 curlpod fetcher의 경우 시작 스냅샷을 미리 수집하고 저장해야 한다.
+이를 위해 fetcher가 "pre-fetch" 능력을 선언할 수 있는 인터페이스 분리가 필요하다:
+
+```go
+// 제안: pkg/slo/fetch/prefetcher.go
+type PreFetchable interface {
+    MetricsFetcher
+    PreFetch(ctx context.Context) error  // Start() 시점에 스냅샷 저장
+}
+
+// session.go Start() 수정 제안
+func (s *Session) Start() {
+    s.impl.started = now()
+    if pf, ok := s.impl.fetcher.(fetch.PreFetchable); ok {
+        pf.PreFetch(ctx)  // curlpod fetcher가 이를 구현하면 start 스냅샷 저장
+    }
+}
+```
+
+**(현재 workaround)**: `snapshotFetcher` 패턴으로 before/after 스냅샷을 테스트에서
+직접 수집하고 harness에 주입한다. `test/e2e/sli_e2e_test.go` 참조.
+
+```go
+// 테스트에서 직접 두 번 curlpod를 실행하여 스냅샷 수집
+startValues, _ := fetchMetricsViaCurlpod(ctx, ...)   // CR 적용 전
+kubectlApplySample(cr)
+time.Sleep(5 * time.Second)
+endValues, _ := fetchMetricsViaCurlpod(ctx, ...)     // CR 적용 후
+
+// snapshotFetcher로 harness에 주입
+session := harness.NewSession(harness.SessionConfig{
+    Fetcher: &snapshotFetcher{startValues: startValues, endValues: endValues},
+})
+session.Start()
+sum, _ := session.End(ctx)
+// reconcile_total_delta = endValues - startValues = 정확한 delta
+```
+
+---
+
+### [버그] scripts/kind-image-load.sh: awk/head 컨테이너 내부 실행
+
+**심각도**: 중간 (kind-image-load.sh가 항상 exit code 127로 실패)
+**파일**: `scripts/kind-image-load.sh`
+
+**현상**:
+
+스크립트의 이미지 ID 검색 로직이 `awk`와 `head`를 `kubectl exec` 내부(kube-proxy 컨테이너)
+에서 실행한다. kube-proxy 컨테이너는 BusyBox 없이 최소화된 이미지로, 이 명령들이 없다.
+
+```bash
+# 문제 코드 (수정 전)
+IMAGE_ID=$(kubectl exec -n kube-system $HELPER_POD -- sh -c \
+  "ctr images list 2>&1 | grep -v 'registry.k8s.io' | awk '{print \$1}' | head -1")
+# → sh: 1: awk: not found
+# → sh: 1: head: not found
+# → exit code 127
+```
+
+**수정**: ctr 출력을 호스트로 가져온 후 호스트에서 awk/head 처리.
+
+```bash
+# 수정 후: ctr 출력을 호스트로 전달
+IMAGES_LIST=$(kubectl exec -n kube-system $HELPER_POD -- \
+  /host/usr/local/bin/ctr -n k8s.io ... images list 2>&1)
+IMAGE_ID=$(echo "$IMAGES_LIST" | grep -v 'registry.k8s.io' | ... | awk '{print $1}' | head -1)
+# awk/head는 호스트(dev server)에서 실행 → 정상 동작
+```
+
+**수정 완료**: `scripts/kind-image-load.sh` (2026-03-04).
+
+---
+
+### Phase 3 완료 요약 (2026-03-04)
+
+`test/e2e/sli_e2e_test.go` Phase 3 실 클러스터 E2E 검증 PASS.
+
+- **curlpod 이미지**: `curlimages/curl:kind-cached` (non-latest 태그, `imagePullPolicy: IfNotPresent`)
+  - kind 노드 containerd에 사전 로드 (privileged pod 경유)
+- **snapshotFetcher 패턴**: before/after 스냅샷 직접 수집 후 harness 주입 (Gap G workaround)
+- **실측 결과**:
+  ```
+  reconcile_total_delta      status=pass   value=1   (VERIFIED >= 1)
+  workqueue_adds_total_delta status=pass   value=1
+  workqueue_depth_end        status=pass   value=0
+  rest_client_requests_total status=pass   value=5
+  ```
+- **총 소요시간**: 16.06s (curlpod 2회 실행 포함)
+- **JSON 아티팩트**: `/tmp/sli-results/` 저장 확인
+
+### 갭 우선순위 전체 현황 (2026-03-04 기준)
+
+| 갭 | 위치 | 상태 | 난이도 | 설명 |
+|----|------|------|--------|------|
+| 7.1: CurlImage | kube-slint | **해소** | - | SessionConfig.CurlImage 추가(58c0d88) |
+| 7.2: TLS skip | kube-slint | **해소** | - | SessionConfig.TLSInsecureSkipVerify 추가(58c0d88) |
+| A: Judge 주석 | kube-slint presets.go | 미해소 | 한 줄 | 에러 delta 마킹 비활성 |
+| E: GateOnLevel | hello-operator config | 미해소 | 한 줄 | 게이팅 전파 없음 |
+| B: 레이블 매칭 | kube-slint engine | 미해소 | 중간 | A/E 효과 무력화 |
+| C: ComputeEnd | kube-slint engine | 미해소 | 중간 | gauge 정확도 |
+| D: cross-run | kube-slint 신규 pkg | 미해소 | 높음 | 추세 기반 회귀 탐지 |
+| **F: imagePullPolicy** | kube-slint client.go | **신규** | 낮음 | air-gapped kind 환경 차단 |
+| **G: Start() 미스냅샷** | kube-slint session.go | **신규** | 높음 | curlpod delta=0 설계 불일치 |

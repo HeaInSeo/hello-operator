@@ -80,12 +80,12 @@
 - Step 2: SLI 계측 도구 통합 (kube-slint v1.0.0-rc.1 기반)
   - Phase 1: [Completed] Mock Fetcher 기반 단위 테스트 (클러스터 불필요)
   - Phase 2: [Completed] curlpod Fetcher + RBAC 설정 + Tiltfile local_resource 연동
-  - Phase 3: 실제 클러스터에서 E2E_SLI=1 로 검증
+  - Phase 3: [Completed] 실 클러스터 E2E_SLI=1 검증 (2026-03-04)
 - Step 3: Tiltfile 고도화 (Inner-loop 내 SLI 자동 체크 기능 추가)
 - Step 4: 환경별 Kustomize 오버레이(kind/vm) 정교화 및 배포 검증
 
 ## [Current Task]
-- 목표: Step 2 Phase 2 완료 (curlpod fetcher + RBAC)
+- 목표: Step 2 Phase 3 완료 (실 클러스터 E2E_SLI=1 검증)
 - 체크리스트 (Step 1 완료):
   - [x] `scripts/install-tools.sh` 작성 및 실행 권한 부여
   - [x] `./bin` 로컬 설치 완료(`tilt`, `ko`, `kind`)
@@ -457,3 +457,33 @@ local_resource(
     - SLI JSON 저장 = `활성화` (두 테스트 파일 모두 ArtifactsDir 설정 완료)
     - kube-slint 갭 분석 = `완료` (docs/KUBE_SLINT_DX_AUDIT.md [Update 2026-03-03] 섹션)
     - 다음 단계 = kube-slint 갭 A+B+E 해결 (presets.go Judge 주석 해제 + 레이블 매칭 개선)
+- 2026-03-04: Step 2 Phase 3 - 실 클러스터 E2E_SLI=1 검증 완료.
+  - 수행 내용:
+    - curlpod `ImagePullBackOff` 원인 분석:
+      - `curlimages/curl:latest` → imagePullPolicy: Always (Kubernetes 기본값) → kind 노드 pull 시도 → docker.io 접근 불가 (no route to host)
+      - 해결: `curlimages/curl:kind-cached` 태그(non-latest) 사용 → imagePullPolicy: IfNotPresent
+      - kind 노드 containerd에 사전 로드 (privileged pod + ctr images import + tag)
+    - `sli_e2e_test.go` `snapshotFetcher` 패턴 도입:
+      - 근본 원인: `session.Start()`가 메트릭을 pre-fetch하지 않고 `End()` 내부에서 두 번의 fetch가 모두 post-reconcile 상태를 반환 → delta=0
+      - 해결: 테스트에서 직접 curlpod를 두 번 실행(CR 적용 전/후)하여 `snapshotFetcher`로 주입
+      - `snapshotFetcher`: `MetricsFetcher` 구현체, 첫 번째 Fetch() = 사전 수집 start, 두 번째 = end 반환
+    - `scripts/kind-image-load.sh` 버그 수정:
+      - `awk`/`head`를 kube-proxy 컨테이너 내부(kubectl exec)에서 실행 → exit code 127
+      - 수정: ctr 출력을 호스트로 전달 후 호스트에서 awk/head 처리
+    - `docs/KUBE_SLINT_DX_AUDIT.md` [Update 2026-03-04] 섹션 추가:
+      - 갭 F: curlpod imagePullPolicy 미설정 (air-gapped 환경 차단)
+      - 갭 G: session.Start() 미스냅샷 (curlpod delta=0 설계 불일치)
+      - 버그: kind-image-load.sh awk/head 컨테이너 내부 실행
+    - `docs/IMAGEPULLBACKOFF_REPORT.md` 신규: ImagePullBackOff 장애 분석 보고서
+    - Tilt UI 복구: tilt up --host 0.0.0.0 --port 10350 재시작 (PID 3051898)
+  - 검증:
+    - `E2E_SLI=1 go test ./test/e2e/ -run TestHelloSLIE2E -v -tags e2e` → PASS (16.06s)
+    - `reconcile_total_delta=1` (VERIFIED >= 1)
+    - `workqueue_adds_total_delta=1`, `workqueue_depth_end=0`, `rest_client_requests_total_delta=5`
+    - curlpod: `curlimages/curl:kind-cached` already present on machine (pull 없음)
+    - `/tmp/sli-results/` JSON 아티팩트 생성 확인
+    - Tilt UI http://100.92.45.46:10350/ 접근 가능
+  - 상태:
+    - Step 2 Phase 3 = `Completed` (실 클러스터 SLI E2E 검증 완료)
+    - kube-slint 신규 갭 F, G 발견 및 문서화 완료
+    - 다음 단계: Step 3 (Tiltfile 고도화) 또는 kube-slint 갭 A+B+E 해결
