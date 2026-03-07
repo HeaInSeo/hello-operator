@@ -933,9 +933,9 @@ IMAGE_ID=$(echo "$IMAGES_LIST" | grep -v 'registry.k8s.io' | ... | awk '{print $
 | 7.1: CurlImage | kube-slint | **해소** | - | SessionConfig.CurlImage 추가(58c0d88) |
 | 7.2: TLS skip | kube-slint | **해소** | - | SessionConfig.TLSInsecureSkipVerify 추가(58c0d88) |
 | A: Judge 주석 | kube-slint presets.go | 미해소 | 한 줄 | 에러 delta 마킹 비활성 |
-| E: GateOnLevel | hello-operator config | 미해소 | 한 줄 | 게이팅 전파 없음 |
+| E: GateOnLevel | hello-operator config | **해소** | - | sli_e2e_test.go GateOnLevel:"fail" 적용(2026-03-04) |
 | B: 레이블 매칭 | kube-slint engine | 미해소 | 중간 | A/E 효과 무력화 |
 | C: ComputeEnd | kube-slint engine | 미해소 | 중간 | gauge 정확도 |
 | D: cross-run | kube-slint 신규 pkg | 미해소 | 높음 | 추세 기반 회귀 탐지 |
 | **F: imagePullPolicy** | kube-slint client.go | **신규** | 낮음 | air-gapped kind 환경 차단 |
-| **G: Start() 미스냅샷** | kube-slint session.go | **신규** | 높음 | curlpod delta=0 설계 불일치 |
+| **G: Start() 미스냅샷** | kube-slint session.go | **구현됨** | - | SnapshotFetcher 인터페이스 + PreFetch 구현(2026-03-04). hello-operator snapshotFetcher workaround는 검증 후 제거 가능. |

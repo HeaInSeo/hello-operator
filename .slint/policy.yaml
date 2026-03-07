@@ -1,0 +1,46 @@
+schema_version: "slint.policy.v1"
+metadata:
+  name: "hello-operator-dev-policy"
+  owner: "hello-operator"
+
+# Minimum viable policy for consumer UX validation.
+# Metrics available from hello-operator DefaultV3Specs:
+#   reconcile_total_delta, workqueue_adds_total_delta,
+#   workqueue_depth_end, rest_client_requests_total_delta
+#
+# Note: reconcile_success_delta / reconcile_error_delta are skipped
+# because controller-runtime exposes labels as {controller="hello",result="success"}
+# but DefaultV3Specs filters by {result="success"} only. Label mismatch → skip.
+# See: docs/KUBE_SLINT_DX_AUDIT.md Gap A
+
+thresholds:
+  - name: "workqueue_depth_end_max"
+    metric: "workqueue_depth_end"
+    operator: "<="
+    value: 5
+    severity: "fail"
+  - name: "reconcile_total_delta_min"
+    metric: "reconcile_total_delta"
+    operator: ">="
+    value: 1
+    severity: "fail"
+
+regression:
+  enabled: false
+
+reliability:
+  required: false
+  min_level: "partial"
+
+first_run:
+  default_result: "warn"
+  evaluate_thresholds: true
+  evaluate_regression: false
+
+baseline:
+  required: false
+  on_unavailable: "warn"
+  on_corrupt: "no_grade"
+
+fail_on:
+  - "threshold_miss"

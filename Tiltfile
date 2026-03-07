@@ -90,3 +90,13 @@ local_resource(
   auto_init=False,
   deps=['test/e2e/sli_e2e_test.go'],
 )
+# 7 kube-slint slint-gate: policy evaluation over latest sli-summary
+#    전제조건: sli-mock-test 또는 sli-e2e-test 실행 완료 (summary 생성 필요).
+#    hack/run-slint-gate.sh 가 /tmp/sli-results/ 에서 최신 summary를 artifacts/ 로 복사 후 평가.
+#    결과: artifacts/slint-gate-summary.json (gate_result: PASS/WARN/FAIL/NO_GRADE)
+local_resource(
+  'slint-gate',
+  cmd='bash hack/run-slint-gate.sh',
+  auto_init=False,
+  deps=['.slint/policy.yaml', 'hack/run-slint-gate.sh'],
+)

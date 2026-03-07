@@ -32,3 +32,6 @@ bin/
 
 # Tilt build artifacts
 .tilt-ko-image-ref
+
+# kube-slint guardrail artifacts (generated, not committed)
+artifacts/*.json

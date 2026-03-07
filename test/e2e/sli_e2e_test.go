@@ -173,6 +173,9 @@ func TestHelloSLIE2E(t *testing.T) {
 		Token:                 token,
 		TLSInsecureSkipVerify: true,
 		ArtifactsDir:          "/tmp/sli-results",
+		// Gap E 해소: GateOnLevel="fail"로 JudgeSpec 결과가 테스트 실패로 전파되도록 설정.
+		// reconcile_error_delta에 JudgeSpec이 활성화되면(Gap A 해소 후) 에러 발생 시 테스트 실패.
+		GateOnLevel: "fail",
 		// snapshotFetcher 주입: engine의 두 번의 Fetch() 호출에 각각 start/end 스냅샷 반환
 		Fetcher: &snapshotFetcher{startValues: startValues, endValues: endValues},
 	})

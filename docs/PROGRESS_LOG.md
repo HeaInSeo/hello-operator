@@ -65,7 +65,9 @@
 ### 현재 갭
 - kube-slint: `github.com/HeaInSeo/kube-slint v1.0.0-rc.1` 확인. Go 라이브러리 기반 E2E 하네스.
   DX 감사 완료: `docs/KUBE_SLINT_DX_AUDIT.md` 참조.
-  주요 갭: curlpod TLS 인증서 검증, RBAC 설정 필요, CurlImage 커스터마이징 미노출.
+  해소 완료(58c0d88): CurlImage 커스터마이징(갭 7.1), TLS skip(갭 7.2).
+  미해소: 갭 A(Judge 주석), 갭 B(레이블 부분 매칭), 갭 F(imagePullPolicy), 갭 G(Start() 미스냅샷).
+  hello-operator 측 완료: 갭 E(GateOnLevel:"fail" 적용, 2026-03-04).
 - Tilt 원격 UI 접근: 방화벽 포트 10350/tcp 개방 완료. `tilt up --host 0.0.0.0 --port 10350` 사용.
   Tailscale 접속 URL: `http://100.92.45.46:10350/`.
 - Tilt inner-loop 내 SLI 자동 체크 파이프라인은 Phase 1(Mock) → Phase 2(curlpod) → Phase 3(Tiltfile) 순서로 진행 예정.
@@ -85,7 +87,8 @@
 - Step 4: 환경별 Kustomize 오버레이(kind/vm) 정교화 및 배포 검증
 
 ## [Current Task]
-- 목표: Step 2 Phase 3 완료 (실 클러스터 E2E_SLI=1 검증)
+- 목표: Step 3(Tiltfile 고도화) 또는 kube-slint 갭(A/B/F/G) 해결
+- Step 2 Phase 3 완료(2026-03-04): 실 클러스터 E2E_SLI=1 검증 PASS, 갭 E(GateOnLevel) 적용
 - 체크리스트 (Step 1 완료):
   - [x] `scripts/install-tools.sh` 작성 및 실행 권한 부여
   - [x] `./bin` 로컬 설치 완료(`tilt`, `ko`, `kind`)
