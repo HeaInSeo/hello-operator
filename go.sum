@@ -4,6 +4,8 @@ github.com/HeaInSeo/kube-slint v1.0.0-rc.1 h1:bM3AV4hiYQtphPz2CM3gAu5zjtZJW9LbKj
 github.com/HeaInSeo/kube-slint v1.0.0-rc.1/go.mod h1:1i4OSsmGTl0Zk4LV8Oy4jJQuyXz7OvJr5vCExsew6JQ=
 github.com/HeaInSeo/kube-slint v1.0.0-rc.1.0.20260302080738-58c0d8811314 h1:TOEXFXA/khkiaRsuJlnF6pyHt/L3nBpkWmUAx4UTTtw=
 github.com/HeaInSeo/kube-slint v1.0.0-rc.1.0.20260302080738-58c0d8811314/go.mod h1:4Dafsvt44Kh6ba15PdWv/7fDyiPwm+pHregRrOMAVLg=
+github.com/HeaInSeo/kube-slint v1.0.0-rc.1.0.20260304084500-4d3867ccc6ba h1:7WUIykTfeDaIHOjzgBUDPAEBYGuwNEcoNR2eAmM4H94=
+github.com/HeaInSeo/kube-slint v1.0.0-rc.1.0.20260304084500-4d3867ccc6ba/go.mod h1:4Dafsvt44Kh6ba15PdWv/7fDyiPwm+pHregRrOMAVLg=
 github.com/antlr4-go/antlr/v4 v4.13.0 h1:lxCg3LAv+EUK6t1i0y1V6/SLeUi0eKEKdhQAlS8TVTI=
 github.com/antlr4-go/antlr/v4 v4.13.0/go.mod h1:pfChB/xh/Unjila75QW7+VU4TSnWnnk9UTnmpPaOR2g=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=

@@ -3,7 +3,7 @@ module github.com/HeaInSeo/hello-operator
 go 1.24.6
 
 require (
-	github.com/HeaInSeo/kube-slint v1.0.0-rc.1.0.20260302080738-58c0d8811314
+	github.com/HeaInSeo/kube-slint v1.0.0-rc.1.0.20260304084500-4d3867ccc6ba
 	github.com/onsi/ginkgo/v2 v2.22.0
 	github.com/onsi/gomega v1.36.1
 	k8s.io/apimachinery v0.34.1

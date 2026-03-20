@@ -62,18 +62,16 @@
 - `docs/TROUBLESHOOTING_STEP1.md`:
   - cgroup v2 위임 실패 원인, 해결 절차, 로그 해석법을 초보자 대상으로 기술.
 
-### 현재 갭
-- kube-slint: `github.com/HeaInSeo/kube-slint v1.0.0-rc.1` 확인. Go 라이브러리 기반 E2E 하네스.
-  DX 감사 완료: `docs/KUBE_SLINT_DX_AUDIT.md` 참조.
-  해소 완료(58c0d88): CurlImage 커스터마이징(갭 7.1), TLS skip(갭 7.2).
-  미해소: 갭 A(Judge 주석), 갭 B(레이블 부분 매칭), 갭 F(imagePullPolicy), 갭 G(Start() 미스냅샷).
-  hello-operator 측 완료: 갭 E(GateOnLevel:"fail" 적용, 2026-03-04).
-- Tilt 원격 UI 접근: 방화벽 포트 10350/tcp 개방 완료. `tilt up --host 0.0.0.0 --port 10350` 사용.
-  Tailscale 접속 URL: `http://100.92.45.46:10350/`.
-- Tilt inner-loop 내 SLI 자동 체크 파이프라인은 Phase 1(Mock) → Phase 2(curlpod) → Phase 3(Tiltfile) 순서로 진행 예정.
-- ttl.sh 이미지 TTL: 24h. 장기 개발 시 로컬 레지스트리 또는 영구 레지스트리로 전환 권장.
-- kind 클러스터 재생성 시 관리자 권한 필요 (`scripts/kind-cluster-init.sh` 참조).
-- SSH 포트 포워딩 및 원격 UI 접근 트러블슈팅: `docs/TROUBLESHOOTING_STEP1.md` 섹션 8 참조.
+### 현재 기준선
+- 소비자 fixture 저장소: `hello-operator`.
+- 소비 기준선: `github.com/HeaInSeo/kube-slint v1.0.0-rc.1` (`4d3867ccc6ba` 기반) 확인.
+- 운영 경로: `Tiltfile` + `hack/run-slint-gate.sh` + `.slint/policy.yaml` + `test/e2e/sli_*`.
+- 최소 검증: Step 2 Phase 3 실 클러스터 `E2E_SLI=1` PASS(2026-03-20, `SnapshotFetcher/PreFetch` 경로 기준), `GateOnLevel:"fail"` 적용 완료.
+- 해소 완료: `CurlImage` 커스터마이징(갭 7.1), `TLSInsecureSkipVerify`(갭 7.2), `sli_e2e_test.go`의 수동 `snapshotFetcher`/pre-post fetch workaround 제거.
+- 남은 부채(TODO): 갭 A(Judge 주석), 갭 B(레이블 부분 매칭), 갭 F(imagePullPolicy).
+- 남은 bridge/workaround(TODO): `../kube-slint` sibling checkout, 고정 test case `hello-sample-create`, `/tmp/sli-results`, local `pyyaml`.
+- 열린 리스크(TODO): 현재 E2E 경로는 `kube-slint`의 `PreFetch/Start()` semantics가 workload 변경 전에 호출된다는 계약에 의존한다.
+- 참조: 세부 근거는 `docs/KUBE_SLINT_DX_AUDIT.md`, `docs/KUBE_SLINT_CONSUMER_UX_TEST_REPORT.md`, `docs/TROUBLESHOOTING_STEP1.md`.
 
 ## [Roadmap]
 - Step 1: [Completed] Tilt/ko/Kind 환경 통합, 스모크 테스트, 트러블슈팅 문서화
@@ -87,18 +85,12 @@
 - Step 4: 환경별 Kustomize 오버레이(kind/vm) 정교화 및 배포 검증
 
 ## [Current Task]
-- 목표: Step 3(Tiltfile 고도화) 또는 kube-slint 갭(A/B/F/G) 해결
-- Step 2 Phase 3 완료(2026-03-04): 실 클러스터 E2E_SLI=1 검증 PASS, 갭 E(GateOnLevel) 적용
-- 체크리스트 (Step 1 완료):
-  - [x] `scripts/install-tools.sh` 작성 및 실행 권한 부여
-  - [x] `./bin` 로컬 설치 완료(`tilt`, `ko`, `kind`)
-  - [x] `.gitignore`에 `bin/` 포함 확인
-  - [x] `export PATH=$(pwd)/bin:$PATH` 기준 툴 버전 검증
-  - [x] kind 클러스터 생성 (rootful podman + 관리자 권한으로 해결)
-  - [x] cgroup 위임 영구화 (tmpfiles.d + systemd drop-in)
-  - [x] `tilt ci` 기반 kind-tilt-study 배포 + reconcile 로그 채집
-  - [x] `docs/TROUBLESHOOTING_STEP1.md` 작성
-  - [x] `scripts/kind-cluster-init.sh` 작성
+- 현재 상태: 소비자 fixture baseline 정리 완료, 다음 작업은 `hello-operator` dependency baseline 재검증 또는 `kube-slint` 문서 부채 정리.
+- 완료된 것: Step 2 Phase 3 실 클러스터 `E2E_SLI=1` PASS, `GateOnLevel:"fail"` 적용, consumer fixture 역할 정의 완료, `snapshotFetcher` workaround 제거 1건 검증 완료.
+- 남은 TODO:
+  - 남은 bridge/workaround(`../kube-slint`, `hello-sample-create`, `/tmp/sli-results`, `pyyaml`)를 별도 단위로 검토
+  - `PreFetch/Start()` 계약 의존 리스크를 문서/테스트 수준에서 계속 추적
+  - `docs/PROGRESS_LOG.md` 외의 오래된 갭 서술을 다음 턴에서 추가 정리
 
 ### Step 2 설계 초안 (kube-slint Readiness)
 
