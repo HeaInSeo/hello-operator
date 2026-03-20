@@ -1,8 +1,14 @@
 # hello-operator
-// TODO(user): Add simple overview of use/purpose
+
+`hello-operator` is the canonical consumer validation repo for `kube-slint`.
+
+This repository still contains standard Kubebuilder sample-operator scaffolding, but its primary purpose is to validate consumer integration friction, reporting flow, and repeatable attachment paths for `kube-slint`.
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+
+Use this repo as a consumer-side fixture when verifying how `kube-slint` behaves in a realistic operator repository. Treat the Kubebuilder deployment/testing instructions below as fixture operations for that validation role, not as the governing identity of this repository.
+
+Codex operating context for this repository is defined by `AGENTS.md` and `docs/CODEX_OPERATING_RULES.md`.
 
 ## Getting Started
 
@@ -132,4 +138,3 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-
