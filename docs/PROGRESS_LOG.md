@@ -66,10 +66,18 @@
 - 소비자 fixture 저장소: `hello-operator`.
 - 소비 기준선: `github.com/HeaInSeo/kube-slint v1.0.0-rc.1` (`4d3867ccc6ba` 기반) 확인.
 - 운영 경로: `Tiltfile` + `hack/run-slint-gate.sh` + `.slint/policy.yaml` + `test/e2e/sli_*`.
+- `.slint/policy.yaml`의 역할: 이 파일은 `hello-operator` 로컬 fixture 실행을 위한 first-run/dev policy다.
+- RC baseline contract는 `hello-operator` 내부 policy가 아니라 `kube-slint` 저장소의 policy + baseline pair를 기준으로 본다.
+- 따라서 두 경로는 경쟁 관계가 아니라 목적이 다른 운영 구분이다.
 - 최소 검증: Step 2 Phase 3 실 클러스터 `E2E_SLI=1` PASS(2026-03-20, `SnapshotFetcher/PreFetch` 경로 기준), `GateOnLevel:"fail"` 적용 완료.
 - 해소 완료: `CurlImage` 커스터마이징(갭 7.1), `TLSInsecureSkipVerify`(갭 7.2), `sli_e2e_test.go`의 수동 `snapshotFetcher`/pre-post fetch workaround 제거.
 - 남은 부채(TODO): 갭 A(Judge 주석), 갭 B(레이블 부분 매칭), 갭 F(imagePullPolicy).
-- 남은 bridge/workaround(TODO): `../kube-slint` sibling checkout, 고정 test case `hello-sample-create`, `/tmp/sli-results`, local `pyyaml`.
+- 남은 bridge/workaround(TODO): 고정 test case `hello-sample-create`, local `pyyaml`.
+- 경로 정렬 기준선: SLI 테스트 출력과 gate 평가 입력은 모두 저장소의 `artifacts/` 디렉토리를 기본 경로로 사용한다.
+- `pyyaml` 의존은 현재 유지되지만, `hack/run-slint-gate.sh`가 이제 사전 체크와 설치 안내를 명시적으로 출력한다.
+- evaluator vendor 기준선: `hack/third_party/slint_gate.py`는 `kube-slint` `904bc10a0afa6db6fda36e6ad1bc05a5528f879b`에서 고정 복사했다.
+- sync 규칙: RC 기준선 변경으로 evaluator를 올릴 때만 원본 commit을 함께 갱신한다. 기본 실행 경로는 vendored evaluator이고, 필요 시 `SLINT_GATE_PY=/path/to/slint_gate.py` override를 허용한다.
+- 현재 상태에서 first-run/dev policy와 RC baseline contract의 이원화는 열린 부채가 아니라 의도된 역할 분리로 취급한다.
 - 열린 리스크(TODO): 현재 E2E 경로는 `kube-slint`의 `PreFetch/Start()` semantics가 workload 변경 전에 호출된다는 계약에 의존한다.
 - 참조: 세부 근거는 `docs/KUBE_SLINT_DX_AUDIT.md`, `docs/KUBE_SLINT_CONSUMER_UX_TEST_REPORT.md`, `docs/TROUBLESHOOTING_STEP1.md`.
 
@@ -85,12 +93,12 @@
 - Step 4: 환경별 Kustomize 오버레이(kind/vm) 정교화 및 배포 검증
 
 ## [Current Task]
-- 현재 상태: 소비자 fixture baseline 정리 완료, 다음 작업은 `hello-operator` dependency baseline 재검증 또는 `kube-slint` 문서 부채 정리.
-- 완료된 것: Step 2 Phase 3 실 클러스터 `E2E_SLI=1` PASS, `GateOnLevel:"fail"` 적용, consumer fixture 역할 정의 완료, `snapshotFetcher` workaround 제거 1건 검증 완료.
+- 현재 상태: RC/post-RC 기준선 정리 완료. `hello-operator`는 canonical consumer fixture 경로와 local first-run/dev policy 역할이 고정됐다.
+- 완료된 것: Step 2 Phase 3 실 클러스터 `E2E_SLI=1` PASS, `GateOnLevel:"fail"` 적용, consumer fixture 역할 정의 완료, `snapshotFetcher` workaround 제거, `../kube-slint` 직접 의존 제거, `artifacts/` 경로 정렬 완료.
 - 남은 TODO:
-  - 남은 bridge/workaround(`../kube-slint`, `hello-sample-create`, `/tmp/sli-results`, `pyyaml`)를 별도 단위로 검토
+  - 남은 실행/fixture 항목은 기본 testcase 의미(`hello-sample-create`)와 local `pyyaml` 의존 자체다.
   - `PreFetch/Start()` 계약 의존 리스크를 문서/테스트 수준에서 계속 추적
-  - `docs/PROGRESS_LOG.md` 외의 오래된 갭 서술을 다음 턴에서 추가 정리
+  - 오래된 prose/history 문구를 현재 기준선에 맞게 추가 정리
 
 ### Step 2 설계 초안 (kube-slint Readiness)
 

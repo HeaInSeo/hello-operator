@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -64,6 +65,11 @@ func TestHelloSLIE2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
+	artifactsDir, err := filepath.Abs("../../artifacts")
+	if err != nil {
+		t.Fatalf("[sli-e2e] artifacts 경로 계산 실패: %v", err)
+	}
+
 	// 1. sli-checker SA용 Bearer 토큰 발급
 	token, err := kubectlCreateToken(sliServiceAccountName, sliNamespace)
 	if err != nil {
@@ -86,12 +92,12 @@ func TestHelloSLIE2E(t *testing.T) {
 	session := harness.NewSession(harness.SessionConfig{
 		Namespace:             sliNamespace,
 		MetricsServiceName:    sliMetricsSvcName,
-		TestCase:              "hello-sample-create",
+		TestCase:              defaultSLITestCase,
 		Suite:                 "hello-operator-sli",
 		ServiceAccountName:    sliServiceAccountName,
 		Token:                 token,
 		TLSInsecureSkipVerify: true,
-		ArtifactsDir:          "/tmp/sli-results",
+		ArtifactsDir:          artifactsDir,
 		// Gap E 해소: GateOnLevel="fail"로 JudgeSpec 결과가 테스트 실패로 전파되도록 설정.
 		// reconcile_error_delta에 JudgeSpec이 활성화되면(Gap A 해소 후) 에러 발생 시 테스트 실패.
 		GateOnLevel: "fail",

@@ -4,43 +4,62 @@
 # Bridge script: find the latest sli-summary and run slint_gate.py.
 #
 # Friction note: kube-slint harness writes sli-summary with a dynamic filename:
-#   /tmp/sli-results/sli-summary.{runId}.{testCase}.json
+#   artifacts/sli-summary.{runId}.{testCase}.json
 # slint_gate.py expects a fixed path: artifacts/sli-summary.json
-# This script bridges the gap by copying the latest file to artifacts/.
+# This script bridges the gap by normalizing the latest summary inside artifacts/.
 #
 # This workaround is hello-operator-specific and must be documented.
-# The filename pattern is hardcoded to "hello-sample-create" (the TestCase value
-# in sli_integration_test.go and sli_e2e_test.go).
-# A generic consumer would need to adjust this.
+# The filename pattern defaults to the hello-operator fixture testcase identifier.
+# Override with SLI_TEST_CASE or the first positional argument if needed.
 #
 # Usage:
 #   bash hack/run-slint-gate.sh [test_case]
-#   test_case defaults to "hello-sample-create"
+#   test_case defaults to ${SLI_TEST_CASE:-hello-sample-create}
 #
 # Dependencies:
 #   - python3
 #   - pyyaml (pip install pyyaml)
-#   - kube-slint repo at ../kube-slint relative to this repo
+#   - vendored slint_gate.py at hack/third_party/slint_gate.py
+#
+# Optional override:
+#   - SLINT_GATE_PY=/path/to/slint_gate.py bash hack/run-slint-gate.sh
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-KUBE_SLINT_DIR="$(cd "${REPO_ROOT}/../kube-slint" && pwd)"
-SLINT_GATE_PY="${KUBE_SLINT_DIR}/hack/slint_gate.py"
+DEFAULT_SLINT_GATE_PY="${REPO_ROOT}/hack/third_party/slint_gate.py"
+SLINT_GATE_PY="${SLINT_GATE_PY:-${DEFAULT_SLINT_GATE_PY}}"
 
-TEST_CASE="${1:-hello-sample-create}"
-SLI_DIR="/tmp/sli-results"
+TEST_CASE="${1:-${SLI_TEST_CASE:-hello-sample-create}}"
 ARTIFACTS_DIR="${REPO_ROOT}/artifacts"
+SLI_DIR="${ARTIFACTS_DIR}"
 POLICY_FILE="${REPO_ROOT}/.slint/policy.yaml"
 OUTPUT_FILE="${ARTIFACTS_DIR}/slint-gate-summary.json"
 FIXED_SUMMARY="${ARTIFACTS_DIR}/sli-summary.json"
 
 # Sanity checks
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "ERROR: python3 not found in PATH"
+  echo "  slint-gate evaluator requires python3 to run the vendored evaluator."
+  echo "  Install Python 3 first, then rerun this script."
+  exit 1
+fi
+
+if ! python3 -c "import yaml" >/dev/null 2>&1; then
+  echo "ERROR: missing Python dependency: pyyaml"
+  echo "  slint-gate reads .slint/policy.yaml, so the vendored evaluator needs 'import yaml'."
+  echo "  Install it with one of:"
+  echo "    python3 -m pip install pyyaml"
+  echo "    pip3 install pyyaml"
+  echo "  Then rerun: bash hack/run-slint-gate.sh"
+  exit 1
+fi
+
 if [ ! -f "${SLINT_GATE_PY}" ]; then
   echo "ERROR: slint_gate.py not found at ${SLINT_GATE_PY}"
-  echo "  Expected kube-slint repo at: ${KUBE_SLINT_DIR}"
-  echo "  Friction: slint_gate.py is not distributed separately from kube-slint repo."
+  echo "  Default vendored path: ${DEFAULT_SLINT_GATE_PY}"
+  echo "  Override with SLINT_GATE_PY=/path/to/slint_gate.py if needed."
   exit 1
 fi
 

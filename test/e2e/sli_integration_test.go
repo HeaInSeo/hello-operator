@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -136,6 +137,11 @@ rest_client_requests_total{code="200",host="127.0.0.1:6443",method="GET"} 15
 func TestHelloSLIMock(t *testing.T) {
 	t.Setenv("SLINT_DISABLE_DISCOVERY", "1")
 
+	artifactsDir, err := filepath.Abs("../../artifacts")
+	if err != nil {
+		t.Fatalf("[sli-mock] artifacts 경로 계산 실패: %v", err)
+	}
+
 	// 시작 스냅샷 서버: idle 상태 메트릭
 	baselineSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
@@ -163,10 +169,10 @@ func TestHelloSLIMock(t *testing.T) {
 	session := harness.NewSession(harness.SessionConfig{
 		Namespace:          "hello-operator-system",
 		MetricsServiceName: "hello-operator-controller-manager-metrics-service",
-		TestCase:           "hello-sample-create",
+		TestCase:           defaultSLITestCase,
 		Suite:              "hello-operator-sli",
 		Fetcher:            fetcher,
-		ArtifactsDir:       "/tmp/sli-results",
+		ArtifactsDir:       artifactsDir,
 	})
 
 	// 측정 창 열기
