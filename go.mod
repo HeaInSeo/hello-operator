@@ -1,6 +1,6 @@
 module github.com/HeaInSeo/hello-operator
 
-go 1.24.6
+go 1.25.5
 
 require (
 	github.com/HeaInSeo/kube-slint v1.0.0-rc.1.0.20260304084500-4d3867ccc6ba
